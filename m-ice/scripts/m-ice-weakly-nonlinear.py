@@ -98,7 +98,7 @@ crit_flag =  False
 length = 4*pi/k
 n=3
 E=1
-
+stress_bc=False
 
 #length = 24*ice_thick
 d = np.linspace(0,2*length,201)
@@ -130,8 +130,8 @@ Dgl = Dgl-offset
 ice_thick = Surfgl[0]-Basegl[0]
 
 # Define geometry of domain
-left_vel = -0*0.5*strain_rate*length/material.secpera*material.time_factor
-right_vel = 2*0.5*strain_rate*length/material.secpera*material.time_factor
+left_vel = -0.5*strain_rate*length/material.secpera*material.time_factor
+right_vel = 0.5*strain_rate*length/material.secpera*material.time_factor
 
 
 #amp = 0.1*ice_thick
@@ -194,7 +194,7 @@ bed_fun_np = interp1d(d,bed,fill_value=(bed[0],bed[-1]),bounds_error=False)
 ice_thick_fun = interp1d(d,surf-base)
 
 #dz = round(ice_thick/13.333333333/2)
-dz = round(ice_thick/13.333333333/2*2)
+dz = round(ice_thick/13.333333333/2)
 Nx = int(length/dz)
 Nz = int(ice_thick/dz)
 fname_base = fname_base + str(strain_rate)+'/'+str(dz) + '/'
@@ -296,6 +296,7 @@ model.maxit = 25
 model.maxit_local = 25
 model.local_err_min = 1.0
 model.tracers = particles
+model.stress_bc = stress_bc 
 
 #model.calving_front = False # This applies a stress boundary condition to the right edge
 model.alpha = 1.0  # Not used anymore, legacy from when we used overrelaxation
@@ -376,8 +377,8 @@ mean_thick = ice_thick
 H0 = mean_thick
 strain_rate=(model.rho_i*model.g*(1-model.rho_i/model.rho_w)*mean_thick/(4*0.5*B*S0))**3
 #print(S0)
-model.left_vel = -0*0.5*strain_rate*length/material.secpera*material.time_factor
-model.right_vel = 2*0.5*strain_rate*length/material.secpera*material.time_factor
+model.left_vel = -0.5*strain_rate*length/material.secpera*material.time_factor
+model.right_vel = 0.5*strain_rate*length/material.secpera*material.time_factor
 dam = []
 tt = []
 model.calving_front=False
@@ -592,7 +593,7 @@ for i in range(i,2500):
    tt.append(t)
    tt_real.append(time_real)
    dam.append(damage)
-   #k = k*np.exp(-time_step*strain_rate*(E+0*melt_non_dim))
+   k = k*np.exp(-time_step*strain_rate*(E+0*melt_non_dim))
    left += -2*(model.left_vel-model.right_vel)*time_step
    #lam = 2*np.pi/k
 
@@ -605,8 +606,8 @@ for i in range(i,2500):
    plt.figure(1);plt.clf();#plt.ion()
    plt.subplot(3,1,1)
    plot(model.mesh.mesh)
-   plt.plot((xxx*mean_thick-lam/2)*np.exp(strain_rate*time_real),surf_a*mean_thick,'k')
-   plt.plot((xxx*mean_thick-lam/2)*np.exp(strain_rate*time_real),bot_a*mean_thick,'k')
+   plt.plot((xxx*mean_thick-lam/2),surf_a*mean_thick,'k')
+   plt.plot((xxx*mean_thick-lam/2),bot_a*mean_thick,'k')
    plt.plot([0,length],[0,0],'k')
    plt.plot([0,length],[-25,-25],'k')
    #plt.plot(xx_init,surf_init)
@@ -724,8 +725,8 @@ for i in range(i,2500):
    model.left_wall= np.min(c[:,0])
    model.mesh.length = model.right_wall-model.left_wall
    length = model.mesh.length
-   model.left_vel =  -0*0.5*strain_rate*length/material.secpera*material.time_factor
-   model.right_vel =  2*0.5*strain_rate*length/material.secpera*material.time_factor
+   model.left_vel =  -0.5*strain_rate*length/material.secpera*material.time_factor
+   model.right_vel =  0.5*strain_rate*length/material.secpera*material.time_factor
    #model.left_vel=left_vel
    #model.right_vel=right_vel
    print('*******************************************')

@@ -311,7 +311,8 @@ class Stokes2D:
        if self.right_vel !=None:
            BCR = DirichletBC(self.system.sub(1).sub(0), Constant(self.right_vel), self.boundary_parts, 4)
            #BCR = DirichletBC(self.system.sub(1), (Constant(self.right_vel),Constant(0.0)), self.boundary_parts, 4)
-           self.BCS.append(BCR)
+           if self.stress_bc==False:
+                self.BCS.append(BCR)
 
        self.DS = Measure("ds")(subdomain_data=self.boundary_parts)
 
@@ -413,15 +414,16 @@ class Stokes2D:
        #ice_pressure = Expression("(A*(surf-x[1])-2*txx)",A=self.rho_i*self.g,txx=txx,surf=self.mesh.surf_fun(length),degree=self.degree)
        #ice_pressure = Expression(("A*(sea_level - x[1])*(x[1]<sea_level)"), A=self.rho_w * self.g,
        #    sea_level=self.sea_level,txx=txx,degree=self.degree)
-       #ice_pressure = Expression(
-    	#"A*(sea_level + offset - x[1])", 
-    	#offset=1.0, 
-    	#A=float(self.rho_w * self.g),
-    	#sea_level=float(self.sea_level),
-    	#degree=int(self.degree)
-	#)
-       #ice_pressure = Expression(("B*A*(sea_level - x[1])*(x[1]<sea_level)"), B=1.0,A=self.rho_w * self.g,
-       #    sea_level=self.sea_level,degree=self.degree)
+       surf_end = self.mesh.surf_fun(length).item()
+       ice_pressure = Expression(
+    	"A*(surf - x[1])-2*txx", 
+    	txx=txx, surf=float(surf_end),
+    	A=float(self.rho_i * self.g),
+    	sea_level=float(self.sea_level),
+    	degree=int(self.degree)
+	    )
+      # ice_pressure = Expression(("B*A*(sea_level - x[1])*(x[1]<sea_level)"), B=1.0,A=self.rho_w * self.g,
+      #     sea_level=self.sea_level,degree=self.degree)
        stokes = inner(Constant(self.rho_i/material.time_factor)*(u-u_old)/dt_step,v)*dx \
              + inner(2*eta*epsilon(u), epsilon(v))*dx \
              - inner(nabla_div(v), p)*dx \
@@ -440,7 +442,7 @@ class Stokes2D:
              - inner(Constant(0.0)*(self.rho_w-self.rho_i)*self.g*N[1]*dot(u*dt_step,z_vector)*z_vector, v)*self.DS(5) \
              + inner(Constant(0.0)*(self.rho_i)*self.g*N[1]*dot(u*dt_step,z_vector)*z_vector, v)*self.DS(6)\
              + inner(Constant(1.0)*self.below_sea_level*(self.rho_w)*self.g*dot((dt_step*u)*np.abs(N[1]), z_vector)*z_vector, v)*self.DS(5) \
-             #+ inner(ice_pressure*normE, v)*ds(4) 
+             + inner(ice_pressure*normE, v)*ds(4) 
 
 
        # Solves problem . . . .
