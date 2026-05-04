@@ -1,0 +1,74 @@
+In file included from /var/folders/1r/h0rpny0d4bz_5h2ycbpvzl4m0000gs/T/tmp5jwlkk62/dolfin_expression_37cfcd79448d56ec1b67c1e897eb221a.cpp:13:
+In file included from /opt/anaconda3/envs/fenics/include/dolfin/function/Expression.h:26:
+In file included from /opt/anaconda3/envs/fenics/include/eigen3/Eigen/Dense:1:
+In file included from /opt/anaconda3/envs/fenics/include/eigen3/Eigen/Core:170:
+/opt/anaconda3/envs/fenics/include/eigen3/Eigen/src/Core/NumTraits.h:223:12: warning: use of infinity is undefined behavior due to the currently enabled floating-point options [-Wnan-infinity-disabled]
+  223 |     return numext::numeric_limits<T>::infinity();
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/opt/anaconda3/envs/fenics/include/eigen3/Eigen/src/Core/arch/NEON/PacketMath.h:3282:63: note: in instantiation of member function 'Eigen::GenericNumTraits<float>::infinity' requested here
+ 3282 |   const Packet4f infinity = pset1<Packet4f>(NumTraits<float>::infinity());
+      |                                                               ^
+/opt/anaconda3/envs/fenics/include/eigen3/Eigen/src/Core/arch/NEON/PacketMath.h:3282:45: warning: use of infinity is undefined behavior due to the currently enabled floating-point options [-Wnan-infinity-disabled]
+ 3282 |   const Packet4f infinity = pset1<Packet4f>(NumTraits<float>::infinity());
+      |                                             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/opt/anaconda3/envs/fenics/include/eigen3/Eigen/src/Core/arch/NEON/PacketMath.h:3292:45: warning: use of infinity is undefined behavior due to the currently enabled floating-point options [-Wnan-infinity-disabled]
+ 3292 |   const Packet2f infinity = pset1<Packet2f>(NumTraits<float>::infinity());
+      |                                             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from /var/folders/1r/h0rpny0d4bz_5h2ycbpvzl4m0000gs/T/tmp5jwlkk62/dolfin_expression_37cfcd79448d56ec1b67c1e897eb221a.cpp:13:
+In file included from /opt/anaconda3/envs/fenics/include/dolfin/function/Expression.h:26:
+In file included from /opt/anaconda3/envs/fenics/include/eigen3/Eigen/Dense:1:
+In file included from /opt/anaconda3/envs/fenics/include/eigen3/Eigen/Core:170:
+/opt/anaconda3/envs/fenics/include/eigen3/Eigen/src/Core/NumTraits.h:223:12: warning: use of infinity is undefined behavior due to the currently enabled floating-point options [-Wnan-infinity-disabled]
+  223 |     return numext::numeric_limits<T>::infinity();
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/opt/anaconda3/envs/fenics/include/eigen3/Eigen/src/Core/arch/NEON/PacketMath.h:3915:64: note: in instantiation of member function 'Eigen::GenericNumTraits<double>::infinity' requested here
+ 3915 |   const Packet2d infinity = pset1<Packet2d>(NumTraits<double>::infinity());
+      |                                                                ^
+/opt/anaconda3/envs/fenics/include/eigen3/Eigen/src/Core/arch/NEON/PacketMath.h:3915:45: warning: use of infinity is undefined behavior due to the currently enabled floating-point options [-Wnan-infinity-disabled]
+ 3915 |   const Packet2d infinity = pset1<Packet2d>(NumTraits<double>::infinity());
+      |                                             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from /var/folders/1r/h0rpny0d4bz_5h2ycbpvzl4m0000gs/T/tmp5jwlkk62/dolfin_expression_37cfcd79448d56ec1b67c1e897eb221a.cpp:13:
+In file included from /opt/anaconda3/envs/fenics/include/dolfin/function/Expression.h:26:
+In file included from /opt/anaconda3/envs/fenics/include/eigen3/Eigen/Dense:1:
+In file included from /opt/anaconda3/envs/fenics/include/eigen3/Eigen/Core:250:
+/opt/anaconda3/envs/fenics/include/eigen3/Eigen/src/Core/arch/Default/GenericPacketMathFunctions.h:853:52: warning: use of infinity is undefined behavior due to the currently enabled floating-point options [-Wnan-infinity-disabled]
+  853 |   const RealPacket cst_pos_inf = pset1<RealPacket>(NumTraits<RealScalar>::infinity());
+      |                                                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/opt/anaconda3/envs/fenics/include/eigen3/Eigen/src/Core/arch/NEON/Complex.h:382:10: note: in instantiation of function template specialization 'Eigen::internal::psqrt_complex<Eigen::internal::Packet1cf>' requested here
+  382 |   return psqrt_complex<Packet1cf>(a);
+      |          ^
+In file included from /var/folders/1r/h0rpny0d4bz_5h2ycbpvzl4m0000gs/T/tmp5jwlkk62/dolfin_expression_37cfcd79448d56ec1b67c1e897eb221a.cpp:13:
+In file included from /opt/anaconda3/envs/fenics/include/dolfin/function/Expression.h:26:
+In file included from /opt/anaconda3/envs/fenics/include/eigen3/Eigen/Dense:1:
+In file included from /opt/anaconda3/envs/fenics/include/eigen3/Eigen/Core:250:
+/opt/anaconda3/envs/fenics/include/eigen3/Eigen/src/Core/arch/Default/GenericPacketMathFunctions.h:853:52: warning: use of infinity is undefined behavior due to the currently enabled floating-point options [-Wnan-infinity-disabled]
+  853 |   const RealPacket cst_pos_inf = pset1<RealPacket>(NumTraits<RealScalar>::infinity());
+      |                                                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/opt/anaconda3/envs/fenics/include/eigen3/Eigen/src/Core/arch/NEON/Complex.h:386:10: note: in instantiation of function template specialization 'Eigen::internal::psqrt_complex<Eigen::internal::Packet2cf>' requested here
+  386 |   return psqrt_complex<Packet2cf>(a);
+      |          ^
+In file included from /var/folders/1r/h0rpny0d4bz_5h2ycbpvzl4m0000gs/T/tmp5jwlkk62/dolfin_expression_37cfcd79448d56ec1b67c1e897eb221a.cpp:13:
+In file included from /opt/anaconda3/envs/fenics/include/dolfin/function/Expression.h:26:
+In file included from /opt/anaconda3/envs/fenics/include/eigen3/Eigen/Dense:1:
+In file included from /opt/anaconda3/envs/fenics/include/eigen3/Eigen/Core:250:
+/opt/anaconda3/envs/fenics/include/eigen3/Eigen/src/Core/arch/Default/GenericPacketMathFunctions.h:853:52: warning: use of infinity is undefined behavior due to the currently enabled floating-point options [-Wnan-infinity-disabled]
+  853 |   const RealPacket cst_pos_inf = pset1<RealPacket>(NumTraits<RealScalar>::infinity());
+      |                                                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/opt/anaconda3/envs/fenics/include/eigen3/Eigen/src/Core/arch/NEON/Complex.h:575:10: note: in instantiation of function template specialization 'Eigen::internal::psqrt_complex<Eigen::internal::Packet1cd>' requested here
+  575 |   return psqrt_complex<Packet1cd>(a);
+      |          ^
+/var/folders/1r/h0rpny0d4bz_5h2ycbpvzl4m0000gs/T/tmp5jwlkk62/dolfin_expression_37cfcd79448d56ec1b67c1e897eb221a.cpp:44:14: warning: unused variable 'pi' [-Wunused-const-variable]
+   44 | const double pi = DOLFIN_PI;
+      |              ^~
+9 warnings generated.
+Undefined symbols for architecture arm64:
+  "__Unwind_Resume", referenced from:
+      _create_dolfin_expression_37cfcd79448d56ec1b67c1e897eb221a in dolfin_expression_37cfcd79448d56ec1b67c1e897eb221a-a8b3b7.o
+      dolfin::dolfin_expression_37cfcd79448d56ec1b67c1e897eb221a::set_property(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, double) in dolfin_expression_37cfcd79448d56ec1b67c1e897eb221a-a8b3b7.o
+      dolfin::dolfin_expression_37cfcd79448d56ec1b67c1e897eb221a::get_property(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>) const in dolfin_expression_37cfcd79448d56ec1b67c1e897eb221a-a8b3b7.o
+      dolfin::dolfin_expression_37cfcd79448d56ec1b67c1e897eb221a::set_generic_function(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, std::__1::shared_ptr<dolfin::GenericFunction>) in dolfin_expression_37cfcd79448d56ec1b67c1e897eb221a-a8b3b7.o
+      dolfin::dolfin_expression_37cfcd79448d56ec1b67c1e897eb221a::get_generic_function(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>) const in dolfin_expression_37cfcd79448d56ec1b67c1e897eb221a-a8b3b7.o
+  "___assert_rtn", referenced from:
+      dolfin::dolfin_expression_37cfcd79448d56ec1b67c1e897eb221a::eval(Eigen::Ref<Eigen::Matrix<double, -1, 1, 0, -1, 1>, 0, Eigen::InnerStride<1>>, Eigen::Ref<Eigen::Matrix<double, -1, 1, 0, -1, 1> const, 0, Eigen::InnerStride<1>>) const in dolfin_expression_37cfcd79448d56ec1b67c1e897eb221a-a8b3b7.o
+ld: symbol(s) not found for architecture arm64
+arm64-apple-darwin20.0: error: linker command failed with exit code 1 (use -v to see invocation)

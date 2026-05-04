@@ -1,0 +1,1041 @@
+"""
+Calculate stream function, derivatives of stream function and stresses numerically for weakly non-linear problems
+"""
+
+import numpy as np
+from numpy.linalg import solve
+from scipy.interpolate import interp1d
+
+
+
+
+rho_i = 910
+rho_w = 1020
+rho_s = 0.0
+#d_ice=rho_i/rho_w
+#xi=1/(1-d_ice)
+d_s = -4*(rho_w - rho_s)/(rho_w - rho_i)
+d_b =  4*(rho_w - rho_s)/(rho_i - rho_s)
+zs = 0.5
+zb =-0.5
+d_is = (rho_w - rho_i)/(rho_w - rho_s)
+d_ib =-(rho_i - rho_s)/(rho_w - rho_s)
+d_ice=rho_i/rho_w
+xi=1/(1-d_ice)
+
+
+
+
+def qmatrix(k,S0,mb,E=1):
+    """
+    Calculate matrix terms such that Ws = qss*s+qsb*b and Wb = qbs*s + qbb*b
+    Input: k (wavenumber), S0 stability number, mb = ice shelf mass balance
+    Output: qss,qsb,qbs,qbb
+    """
+    
+    qss = (8*k**3*E - S0*d_s*np.sinh(2*k) - 2*k*S0*d_s)/(2*k*(1 - np.cosh(2*k) + 2*k**2))  + mb 
+    qsb = (4*np.sinh(k)*k**2*E + np.cosh(k)*k*S0*d_b+ np.sinh(k)*S0*d_b)/(k*(1 - np.cosh(2*k) + 2*k**2))
+    qbs = -(-4*np.sinh(k)*k**2*E + np.cosh(k)*k*S0*d_s + np.sinh(k)*S0*d_s)/(k*(1 - np.cosh(2*k) + 2*k**2))
+    qbb = (8*k**3*E + 2*k*S0*d_b + S0*d_b*np.sinh(2*k))/(2*k*(1 - np.cosh(2*k) + 2*k**2))   + mb
+    return qss,qsb,qbs,qbb
+
+def eigs(k,S0,mb):
+    # Add melt rate to functions?
+    qss,qsb,qbs,qbb=qmatrix(k,S0,mb)
+    b = -(qss+qbb)
+    c = qss*qbb-qsb*qbs
+    sigma1 = -b/2 + np.sqrt((b/2)**2-c)
+    sigma2 = -b/2 - np.sqrt((b/2)**2-c)
+    sigma = np.array([sigma1,sigma2])
+    eig_vec = np.array([qsb,-(qss-sigma1)])
+    nrm = -np.abs(eig_vec[0]-eig_vec[1])
+    #nrm = np.sqrt(eig_vec[0]**2+eig_vec[1]**2)
+    eig_vec = eig_vec/nrm
+
+    # diff eigs1 dS 
+    #-db/dS0 +0.5*((b/2)**2-c)**0.5*(2b/2)*db/dS-dc/ds
+    return sigma,eig_vec
+
+def deigsdS(k,S0,mb):
+    qss,qsb,qbs,qbb=qmatrix(k,S0,mb=mb)
+    dqss = (-2*k*d_s - d_s*np.sinh(2*k))/(2*k*(1 - np.cosh(2*k) + 2*k**2))
+    dqsb = (np.cosh(k)*k*d_b + np.sinh(k)*d_b)/(k*(1 - np.cosh(2*k) + 2*k**2))
+    dqbs = -(np.cosh(k)*k*d_s + d_s*np.sinh(k))/(k*(1 -  np.cosh(2*k) + 2*k**2))
+    dqbb = (2*d_b*k + d_b*np.sinh(2*k))/(2*k*(1 - np.cosh(2*k) + 2*k**2))
+    b = -(qss+qbb)
+    c = qss*qbb-qsb*qbs
+    dbdS = -dqss - dqbb
+    dcdS = dqbb*qss - dqbs*qsb - dqsb*qbs + dqss*qbb
+    deig1_dS= -dbdS + 0.5*(b*dbdS - dcdS)/((b/2)**2 - c)**0.5
+    return deig1_dS
+
+def Scrit(k,mb,E=1):
+    m = mb
+    c = (-4*np.sinh(k)**2*k**2*m**2 + 4*(m + 2*E)**2*k**4)/(4*k**4 - 4*np.sinh(k)**2*k**2)
+    b = (2*k*m*np.cosh(k)*(d_b - d_s)*np.sinh(k) + 4*(d_b/2 - d_s/2)*(m + 2*E)*k**2)/(4*k**4 - 4*np.sinh(k)**2*k**2)
+    a = d_b*d_s*np.sinh(k)**2/(4*k**4 - 4*np.sinh(k)**2*k**2)
+    S = -b/(2*a) + np.sqrt(b**2-4*a*c)/(2*a)
+    return S
+
+
+def psi(k,z):
+    """
+    Calculate stream function 
+    Input: k: wavenumber k, 2*k, etc.
+           z: vertical position 
+    Returns np.array corresponding to coefficients of the 4 unknown coefficients 
+    Example:
+    >>psi(1,1/2)
+    """
+    return np.array([np.cosh(k*z),z*np.sinh(k*z),np.sinh(k*z),z*np.cosh(k*z)])
+
+def diff_psi(k,z,p):
+    """
+    Calculate derivative of stream function 
+    Input: k: wavenumber k, 2*k, etc.
+           z: vertical position 
+           p: order of derivative (1 = 1st derivative, 2 = 2nd derivative)
+    Returns np.array corresponding to coefficients of the 4 unknown coefficients 
+    Example:
+    >>diff_psi(1,-1/2,2)
+    """
+    if np.mod(p,2)==0:
+        t1=k**p*np.cosh(k*z)
+        t2=z*k**p*np.sinh(k*z)+p*k**(p-1)*np.cosh(k*z)
+        t3=k**p*np.sinh(k*z)
+        t4=z*k**p*np.cosh(k*z)+p*k**(p-1)*np.sinh(k*z)
+    else:
+        t1=k**p*np.sinh(k*z)
+        t2=z*k**p*np.cosh(k*z)+p*k**(p-1)*np.sinh(k*z)
+        t3=k**p*np.cosh(k*z)
+        t4=z*k**p*np.sinh(k*z)+p*k**(p-1)*np.cosh(k*z)
+    return np.array([t1,t2,t3,t4])
+
+def stress(k,z,deriv=0):
+    """
+    Calculate horizontal stress sigma_xx in weakly-nonlinear calculation
+    Input k: wavenumber k, 2*k, etc.
+          z: vertical position
+          deriv: order of derivative
+    """
+    return -1/k*(diff_psi(k,z,3+deriv)+k**2*diff_psi(k,z,1+deriv))
+
+def normal_stress(k,z):
+    """
+    Calculate normal stress for a harmonic mode in weakly-nonlinear calculation
+    Input k: wavenumber k, 2*k, etc.
+          z: vertical position
+    """
+    return 1/k*(-diff_psi(k,z,3)+3*k**2*diff_psi(k,z,1))
+
+def shear_stress(k,z):
+    """
+    Calculate shear stress for a harmonic mode in weakly-nonlinear calculation
+    Input k: wavenumber k, 2*k, etc.
+          z: vertical position
+    """
+    return -(diff_psi(k,z,2)+k**2*psi(k,z))
+
+
+def stress_bc(k,S0,E=1):
+    """
+    Calculate the homogeneous parts of the normal stress and shear stress lhs and rhs boundary conditions for 
+    weakly-nonlinear expansion
+    Input k: wavenumber 
+          S0: Stability number
+    Return A, rhs,
+           A=4x4 matrix for coefficients of stream function
+           rhs = homogenous part of forcing 
+    """
+    # Normal stress evaluated at zs
+    eq1=normal_stress(k,zs)
+    # Shear stress evaluated at zs
+    eq2=shear_stress(k,zs)
+    # Normal stress evaluated at zb
+    eq3=normal_stress(k,zb)
+    # Shear stress evaluated at zs
+    eq4=shear_stress(k,zb)
+    # Homogeneous rhs terms (first 2 are proportional to s, second proportional to b)
+    Ss = d_s*S0
+    Sb = d_b*S0
+    rhs = np.array([[Ss,-4*k*E, Sb,-4*k*E]]).T 
+    return np.vstack((eq1,eq2,eq3,eq4)),rhs
+
+
+
+class StreamFun(object):
+    def __init__(self,k,order,harmonic,ms=0,mb=0):
+        self.order = order
+        self.k = k
+        self.ms=ms
+        self.mb=mb
+        self.harmonic = harmonic
+        return
+        
+    def psi(self,z):
+        k = self.harmonic*self.k
+        return  (np.dot(self.C.T,psi(k,z)))
+    
+    def horizontal_vel(self,z):
+        u = -self.diff(z,deriv=1)
+        return u 
+
+    def vertical_vel(self,z):
+        w = self.k*self.psi(z)
+        return w
+    
+    #def horizontal_vel(self,z):
+    #    return self.diff(z,1)
+    
+    
+    def stress(self,z,deriv):
+        k = self.harmonic*self.k
+        return  (np.dot(self.C.T,stress(k,z,deriv)))
+    
+    def diff(self,z,deriv):
+        k = self.harmonic*self.k
+        return  (np.dot(self.C.T,diff_psi(k,z,deriv)))
+    
+    def set_k(self,k):
+        self.k =k 
+        return None
+        
+    def __call__(self,z):
+        return (np.dot(self.C.T,psi(self.k*self.harmonic,z)))
+
+    def solve(self,S0,rhs=None,kin=1,K=0.0,h=[0.0,0.0]):
+        #if kin ==0:
+        #    tmp = 1-self.mb
+        #else:
+        #    tmp = -self.mb
+        eig,vec = eigs(self.k,S0,self.mb)
+        if self.order==1:
+            A,r = stress_bc(self.k*self.harmonic,S0)
+            r[0:2]=r[0:2]*vec[0]
+            r[2:4]=r[2:4]*vec[1]
+            self.C=solve(A,r)
+            self.s=vec[0]
+            self.b=vec[1]
+            self.eig = eig[0]
+            return self.C
+        if self.harmonic==0:
+            # This should be deleted eventually . . . 
+            #tmp=1
+            #tmp =1-self.mb
+            #tmp = 1-self.order -self.order*self.mb
+            self.C=np.array([0,0,0,0])
+            #h=-rhs/(1)
+            #h=rhs/tmp*0
+            h = rhs/(1-self.mb)
+            self.h=h
+            # This comes from the requirement that the ice is in hydrostatic equilibrium  . . .
+            self.s=-4/d_s*h
+            self.b=-4/d_b*h
+
+            h=rhs/(1+self.mb)
+            self.h=h
+            self.s=(1-d_ice)*h
+            self.b=-d_ice*h
+
+            return self.C,self.s,self.b
+        else:
+            #tmp = -self.mb
+            A,r = stress_bc(self.k*self.harmonic,S0)
+            # Can we separate into homogenous and non-homogeneous contributions?
+            e1=np.vstack((-r[0:2],0,0))
+            e2=np.vstack((0,0,-r[2:4]))
+            A=np.hstack((A,e1,e2))
+            eq5 =np.hstack((-self.harmonic*self.k*((psi(self.harmonic*self.k,z=zs))),-self.mb+self.order*eig[0],0))#*(self.order*self.k)**4/(1+(self.order*self.k)**4)
+            eq6 =np.hstack((-self.harmonic*self.k*((psi(self.harmonic*self.k,z=zb))),0,-self.mb+self.order*eig[0]))#*(self.order*self.k)**4/(1+(self.order*self.k)**4)
+            
+            #eq7 = np.zeroes((n,m))
+            #print(n,m)
+            #print('harmonic',self.harmonic,"order",self.order,eq5)
+            #dsdt = -E*s + order m*s +order*E*s 
+            #eq5[4]=eq5[4]-h[0]*K
+            #eq6[5]=eq6[5]-h[1]*K
+            
+            #rhs[4] = rhs[4]-h[0]*K
+            #rhs[5] = rhs[5]-h[1]*K
+            #if self.harmonic==1:
+            #print(eq5)
+            A = np.vstack((A,eq5,eq6))
+            sol = solve(A,rhs)
+            C=sol[0:4]
+            # We can also solve for the inhomogenous part of the stream function
+            # This is the part of the stream function that is non-zero even when perturbations vanish
+            C_inhom = np.linalg.solve(A[0:4,0:4],rhs[0:4])
+            # Deduce the homogeneous portion by substracting out the inhomogeneous portion?
+            C_hom = C-C_inhom
+            #C_hom = C_hom#*((R*self.order*self.k)**4/(1+(R*self.order*self.k)**4))
+            C = C_hom+C_inhom
+            self.C = C
+            #self.C=sol[0:4]
+            self.s=sol[4]#*(R*self.order*self.k)**4/(1+(R*self.order*self.k)**4)
+            self.b=sol[5]#*(R*self.order*self.k)**4/(1+(R*self.order*self.k)**4)
+            return self.C,self.s,self.b
+        return None
+    
+    def set_amp(self,s,b):
+        self.s=s
+        self.b=b
+
+    
+
+    
+
+    def solveS(self,S0,rhs,rhsS2,funcs,S2=None,rhs_non_newt=np.array([0,0,0,0,0,0]),n=3):
+
+        eig,vec = eigs(self.k,S0,self.mb)
+        h11=funcs['h11']
+        part_sol = ParticularSol(h11)
+        rhs_non_newt = part_sol.non_newtonian_rhs(n)
+
+        # Determine matrix components for stream function
+        A,r = stress_bc(self.k,S0)
+
+
+        # Terms proportional to S2
+        S2_terms = np.array([[h11.s*d_s,
+                               0,
+                                h11.b*d_b,
+                               0]]).T 
+        rhsS2 = rhsS2
+        S2_terms_tot = S2_terms#+rhsS2[0:4]
+        
+        
+        # Solve for coefficients independent of S2, S4, etc, these will be proportional to the A^3 or A^5
+        C1=np.linalg.solve(A,rhs[0:4])
+        
+        # Solve for coefficients proportional to S2, S4, etc, these will be proportional to A
+        C2=np.linalg.solve(A,S2_terms_tot)
+        
+        # Solve for coefficients proportional to non-newtonian terms, these will be proportional to A
+        C3 = np.linalg.solve(A,rhs_non_newt[0:4])
+
+        # forcing terms unrelated to S2, S4, etc
+        fs1=(np.dot(C1.T,self.k*psi(self.k,z=zs)))+rhs[4]
+        fb1=(np.dot(C1.T,self.k*psi(self.k,z=zb)))+rhs[5]
+        
+        # forcing terms proportional to S2, S4, etc
+        fs2=(np.dot(C2.T,self.k*psi(self.k,z=zs)))+rhsS2[4]
+        fb2=(np.dot(C2.T,self.k*psi(self.k,z=zb)))+rhsS2[5]
+       
+        # forcing terms proportional to non-Newtonian bits we don't use this???
+        fs3=(np.dot(C3.T,self.k*psi(self.k,z=zs))) + rhs_non_newt[4]
+        fb3=(np.dot(C3.T,self.k*psi(self.k,z=zb))) + rhs_non_newt[5]
+
+
+        # The eigenvalues are singular so require special attention
+        qss,qsb,qbs,qbb=qmatrix(self.k,S0,mb=self.mb)
+        S2 = (qss*fb1-qbs*fs1)/(qbs*fs2-qss*fb2)
+
+        #""" 
+        A,r = stress_bc(self.k*self.harmonic,S0)
+        e1=np.vstack((-r[0:2],0,0))
+        e2=np.vstack((0,0,-r[2:4]))
+        e3=np.vstack((0,0,0,0))
+            
+        # Operator
+        L=np.hstack((A,e1,e2,e3))
+        eq5 =np.hstack((-self.harmonic*self.k*((psi(self.harmonic*self.k,z=zs))),-self.mb+self.order*eig[0],0,0))
+        eq6 =np.hstack((-self.harmonic*self.k*((psi(self.harmonic*self.k,z=zb))),0,-self.mb+self.order*eig[0],0))
+        eq7 = np.zeros((7,))
+        eq7[4]=vec[0]
+        eq7[5]=vec[1]
+        
+        L[0,-1]=-h11.s*d_s
+        L[2,-1]=-h11.b*d_b
+
+        L=np.vstack((L,eq5,eq6,eq7))
+        rhs = np.vstack((rhs,0))
+        sol = solve(L,rhs)
+        C=sol[0:4]
+        s=sol[4]
+        b=sol[5]
+        S2=sol[6]
+        self.s=s
+        self.b=b
+        self.C=C
+        #print(self.s-self.b)
+        #"""
+
+        """
+        self.s = np.array([0])
+        self.b = np.array([0])
+
+        #print(self.s,self.b)
+        #self.C = np.linalg.solve(A,rhs[0:4]+S2_terms*S2)
+
+        self.C1=C1
+        self.C2=C2
+        self.C=C1+C2*S2
+        #print(np.dot(self.C.T,psi(self.k,zs)),rhs[4])
+        #print(np.dot(self.C.T,psi(self.k,zb)),rhs[5])
+        """
+        return S2[0]
+    
+    def solve_landau_project(self,S0,rhs,h11,n,norm='plus'):
+            
+            # Calculate eigenvalues
+            eig,vec = eigs(self.k,S0,self.mb)
+
+            # Calculate homogeneous stress bc's and stress function terms
+            A,r = stress_bc(self.k*self.harmonic,S0)
+            e1=np.vstack((-r[0:2],0,0))
+            e2=np.vstack((0,0,-r[2:4]))
+            e3=np.vstack((0,0,0,0))
+            
+            # Operator
+            L=np.hstack((A,e1,e2,e3))
+            eq5 =np.hstack((-self.harmonic*self.k*((psi(self.harmonic*self.k,z=zs))),-self.mb+self.order*eig[0],0,h11.s))
+            eq6 =np.hstack((-self.harmonic*self.k*((psi(self.harmonic*self.k,z=zb))),0,-self.mb+self.order*eig[0],h11.b))
+            eq7 = np.zeros((7,))
+            #if norm == 'plus':
+            #    eq7[4]=   1.0
+            #    eq7[5]=   1.0
+            #else:
+            #    eq7[4]=  -1.0
+            #    eq7[5]=   1.0
+            eq7[4]=vec[0]
+            eq7[5]=vec[1]
+
+            L=np.vstack((L,eq5,eq6,eq7))
+            rhs = np.vstack((rhs,0))
+            sol = solve(L,rhs)
+            C=sol[0:4]
+            #C_inhom = np.linalg.solve(A[0:4,0:4],rhs[0:4])
+            #C_hom = C-C_inhom
+            #C = C_hom+C_inhom
+            self.C = C
+            self.s=sol[4]
+            self.b=sol[5]
+            self.K=sol[6]
+
+
+            part_sol = ParticularSol(h11)
+            rhs_non_newt = part_sol.non_newtonian_rhs(n)
+            rhs_non_newt = np.vstack((rhs_non_newt,0))
+            sol_non_newt = solve(L,rhs_non_newt)
+            self.sigma_non_newt = sol_non_newt[6]
+            #print(self.sigma_non_newt)
+
+            #C3 = np.linalg.solve(A,rhs_non_newt[0:4])
+
+            
+            
+            
+            return self.C,self.s,self.b,self.K
+
+    
+    def solve_landau_crit(self,S0,rhs,h11,n):
+        part_sol = ParticularSol(h11)
+        rhs_non_newt = part_sol.non_newtonian_rhs(n)
+
+        # Determine matrix components for stream function
+        A,r = stress_bc(self.k,S0)
+
+
+        # Terms proportional to Landau coefficient, K
+        K_terms = np.array([[h11.s,h11.b]]).T 
+            
+        # Solve for coefficients associated with stress boundary conditions, these will be proportional to A^3 or A^5
+        C1=np.linalg.solve(A,rhs[0:4])
+        
+        
+        # Solve for coefficients proportional to non-newtonian terms, these will be proportional to amplitude A
+        C3 = np.linalg.solve(A,rhs_non_newt[0:4])
+        
+        # Kinematic forcing terms unrelated to Landau coefficient
+        fs1=(np.dot(C1.T,self.k*psi(self.k,z=zs)))+rhs[4]
+        fb1=(np.dot(C1.T,self.k*psi(self.k,z=zb)))+rhs[5]
+
+        # Kinematic forcing terms related to Landau coefficient
+        fs2 = -np.array([h11.s])
+        fb2 = -np.array([h11.b])
+        
+        # forcing terms proportional to non-Newtonian bits
+        fs3=(np.dot(C3.T,self.k*psi(self.k,z=zs))) + rhs_non_newt[4]
+        fb3=(np.dot(C3.T,self.k*psi(self.k,z=zb))) + rhs_non_newt[5]
+
+       
+        # Solve for Landau coefficient at the critical point
+        qss,qsb,qbs,qbb=qmatrix(self.k,S0,mb=self.mb)
+        #eig,vec=eigs(self.k,S0,self.mb)
+        #eig1=eig[0]
+        K = ((qss)*fb1-qbs*fs1)/(qbs*fs2-(qss)*fb2)
+
+        #K_non_newt =  -(-qss*(fb3)+qbs*(fs3))/(qss*h11.b-qbs*h11.s)
+        #print(K_non_newt)
+
+        self.C1=C1
+        self.C3=C3
+        self.C=C1
+
+
+        sigma_non_newt =  -(-qss*(fb3)+qbs*(fs3))/(qss*h11.b-qbs*h11.s)
+        
+
+        return K[0],sigma_non_newt
+
+    def set_amp_eqn(self,S0,S2=None,rhs=None,funcs=None,order=3):
+        h11=funcs['h11']
+    
+            
+        # Determine matrix components for stream function
+        A,r = stress_bc(self.k,S0)
+
+        # Terms proportional to S2
+        S2_terms = np.array([[h11.s*d_s,
+                                0,
+                                h11.b*d_b,
+                                0]]).T 
+
+        # Solve for coefficients independent of S2, S4, etc
+        C1=np.linalg.solve(A,rhs[0:4])
+
+        # Solve for coefficients proportional to S2, S4, etc
+        C2=np.linalg.solve(A,S2_terms)
+
+        # forcing terms unrelated to S2, S4, etc
+        fs1=(np.dot(C1.T,self.k*psi(self.k,z=zs)))+rhs[4]
+        fb1=(np.dot(C1.T,self.k*psi(self.k,z=zb)))+rhs[5]
+
+        # forcing terms proportional to S2, S4, etc
+        fs2=(np.dot(C2.T,self.k*psi(self.k,z=zs)))
+        fb2=(np.dot(C2.T,self.k*psi(self.k,z=zb)))
+
+        # The eigenvalues are singular so require special attention
+        qss,qsb,qbs,qbb=qmatrix(self.k,S0,mb=self.mb)
+
+        S2 = (qss*fb1-qbs*fs1)/(qbs*fs2-qss*fb2)
+
+        #self.C = np.linalg.solve(A,rhs[0:4]+S2_terms*S2)
+
+        #qss*(fb1+fb2*S2)-qbs*(fs1+fs2*S2)=0
+        #dAdt = (-qss*fb1+fb2*(S-S0)+qbs*fs2*(S-S0))/(qss*h11.s-qbs*h11.b)
+        if order==3:
+            t3 = -(-qss*fb1+qbs*fs1)/(qss*h11.b-qbs*h11.s)
+            t1 = -(-qss*fb2+qbs*fs2)/(qss*h11.b-qbs*h11.s)
+            self.t3=t3
+            self.t1=t1
+            def amp_eqn(S,S0,A):
+                dAdt = self.t1*(S-S0)*A + self.t3*A**3
+                return dAdt
+        #elif order==5:
+        #    t5 = -(-qss*fb1+qbs*fs1)/(qss*h11.b-qbs*h11.s)
+        #    t3 = 
+        #    t1 = -(-qss*fb2+qbs*fs2)/(qss*h11.b-qbs*h11.s)
+        #    self.t3=t3
+        #    self.t1=t1
+        #    def amp_eqn(S,S0,S2,A):
+        #        
+        #        dAdt = self.t1*(S-S0-S2)*A + self.t3*A**3
+        #        return dAdt
+
+        self.amp_eqn = amp_eqn
+
+class MeanField(StreamFun):
+    def __init__(self,order,rhs): 
+        self.order = order
+        self.s = 0.0
+        self.b = 0.0
+        self.W = -(rhs[0]-rhs[1])
+        self.w = -(rhs[0]+rhs[1])/2
+        self.stress = 0.0
+
+    def psi(self,z):
+        return self.W*z+self.w 
+    
+    def diff(self,z,deriv):
+        if deriv==1:
+            return  self.W 
+        else:
+            return 0.0
+    
+    
+
+
+
+class AmplitudeEquation(object):
+    def __init__(self,S,ms,mb,h11,rhs31,rhs51,rhs31S2,rhs51S2,n=1):
+        self.h11 = h11 
+        self.rhs31 = rhs31
+        self.rhs51 = rhs51
+        self.S0=S[0]
+        self.S2=S[1]
+        self.S4=S[2]
+        self.k = h11.k
+        self.ms = ms
+        self.mb = mb
+        self.n = n
+        K, sigma_non_newt = self.solve_landau_crit(self.S0,rhs31,h11,n)
+        self.K = K  
+        self.sigma_non_newt = sigma_non_newt
+        t1,self.t3,t1_n=self.set_amp_eqn(rhs31,rhs31S2,n,ms,mb)
+        self.t1,self.t5,self.t1_n=self.set_amp_eqn(rhs51,rhs51S2,n,ms,mb)
+        
+        return
+    
+    def set_amp_eqn(self,rhs,rhsS2,n,ms,mb):
+        # Extract particular solution associated with lowest order mode
+        h11 = self.h11
+        part_sol = ParticularSol(h11)
+
+        rhs_non_newt = part_sol.non_newtonian_rhs(n)
+        
+        # Determine matrix components for stream function
+        A,r = stress_bc(self.k,self.S0)
+
+        # Terms proportional to S2
+        S2_terms = np.array([[self.h11.s*d_s,
+                                0,
+                                self.h11.b*d_b,
+                               0]]).T 
+        
+        rhsS2 = rhsS2
+        S2_terms = S2_terms+rhsS2[0:4]
+
+        # Solve for coefficients independent of S2, S4, etc
+        C1=np.linalg.solve(A,rhs[0:4])
+        
+        # Solve for coefficients proportional to S2, S4, etc
+        C2=np.linalg.solve(A,S2_terms)
+        
+        # Solve for coefficients proportional to non-Newtonian bits
+        C3=np.linalg.solve(A,rhs_non_newt[0:4])
+
+        # forcing terms unrelated to S2, S4, etc
+        fs1=(np.dot(C1.T,self.k*psi(self.k,z=zs)))+rhs[4]
+        fb1=(np.dot(C1.T,self.k*psi(self.k,z=zb)))+rhs[5]
+
+        # forcing terms proportional to S2, S4, etc
+        fs2=(np.dot(C2.T,self.k*psi(self.k,z=zs)))
+        fb2=(np.dot(C2.T,self.k*psi(self.k,z=zb)))
+
+         # forcing terms proportional to non-newtonian contributions
+        fs3=(np.dot(C3.T,self.k*psi(self.k,z=zs)))+rhs_non_newt[4]
+        fb3=(np.dot(C3.T,self.k*psi(self.k,z=zb)))+rhs_non_newt[5]
+
+        # The eigenvalues are singular so require special attention
+        qss,qsb,qbs,qbb=qmatrix(self.k,self.S0,mb=mb)
+
+        t3 = -(-qss*fb1+qbs*fs1)/(qss*self.h11.b-qbs*self.h11.s)
+        t1 = -(-qss*fb2+qbs*fs2)/(qss*self.h11.b-qbs*self.h11.s)
+
+        t1_non_newt =  -(-qss*(fb3)+qbs*(fs3))/(qss*self.h11.b-qbs*self.h11.s)
+        return t1, t3, t1_non_newt
+    
+    def amp_eqn_31(self,S,A):
+        dAdt = self.t1*(S-self.S0)*A + self.t1_n*A + self.t5*A**3
+        return dAdt
+    
+    def amp_eqn_51(self,S,A):
+        dAdt = (self.t1*(S-self.S0) +self.t1_n)*A- self.t1*self.S2*A**3 + self.t5*A**5
+
+    def solve_landau_crit(self,S0,rhs,h11,n):
+        part_sol = ParticularSol(h11)
+        rhs_non_newt = part_sol.non_newtonian_rhs(n)
+
+        # Determine matrix components for stream function
+        A,r = stress_bc(self.k,S0)
+
+
+        # Terms proportional to Landau coefficient, K
+        K_terms = np.array([[h11.s,h11.b]]).T 
+            
+        # Solve for coefficients associated with stress boundary conditions
+        C1=np.linalg.solve(A,rhs[0:4])
+        
+        # Solve for coefficients proportional to non-newtonian terms, these will be proportional to amplitude A
+        C3 = np.linalg.solve(A,rhs_non_newt[0:4])
+        
+        
+        # Kinematic forcing terms unrelated to Landau coefficient
+        fs1=(np.dot(C1.T,self.k*psi(self.k,z=zs)))+rhs[4]
+        fb1=(np.dot(C1.T,self.k*psi(self.k,z=zb)))+rhs[5]
+
+        # Kinematic forcing terms related to Landau coefficient
+        fs2 = -np.array([h11.s])
+        fb2 = -np.array([h11.b])
+        
+        # forcing terms proportional to non-Newtonian bits
+        fs3=(np.dot(C3.T,self.k*psi(self.k,z=zs))) + rhs_non_newt[4]
+        fb3=(np.dot(C3.T,self.k*psi(self.k,z=zb))) + rhs_non_newt[5]
+
+    
+        # Solve for Landau coefficient at the critical point
+        qss,qsb,qbs,qbb=qmatrix(self.k,S0,mb=self.mb)
+        K = (qss*fb1-qbs*fs1)/(qbs*fs2-qss*fb2)
+
+        #K_non_newt =  -(-qss*(fb3)+qbs*(fs3))/(qss*h11.b-qbs*h11.s)
+        #print(K_non_newt)
+
+        self.C1=C1
+        self.C3=C3
+        self.C=C1
+
+
+        sigma_non_newt =  -(-qss*(fb3)+qbs*(fs3))/(qss*self.h11.b-qbs*self.h11.s)
+        #K = K_newt[0]+K_non_newt
+
+        return K[0],sigma_non_newt
+    
+    def __call__(self,S,A,order=5):
+        #if self.mb<=-1.0:
+        #    return [(self.n*(1-S)+self.mb)*A]
+        if order == 3:
+            return self.t1*(S-self.S0)*A + self.t3*A**3+ self.t1_n*A
+        elif order == 1:
+            return self.t1*(S-self.S0)*A 
+        else:
+            return self.t1*(S-self.S0)*A - self.t1*self.S2*A**3 + self.t5*A**5 + self.t1_n*A
+            
+        
+    def Acrit(self,S,order=5):
+        Sc = Scrit(self.k,mb=self.mb,E=1)
+        if order==5:
+            alpha = self.t1*(S-self.S0)+self.t1_n
+            beta = - self.t1*self.S2
+            gamma = self.t5
+            A1 = np.zeros(np.shape(S))
+            A2 = np.abs(np.sqrt(2)*np.sqrt(gamma*(-beta + np.sqrt(-4*alpha*gamma + beta**2)))/(2*gamma))
+            A3 = np.abs(np.sqrt(-2*gamma*(beta + np.sqrt(-4*alpha*gamma + beta**2)))/(2*gamma))
+        elif order==3:
+            t1 = self.t1*(S-self.S0)+self.t1_n
+            t3 = self.t3
+            alpha = t1/t3
+            A1 = np.zeros(np.shape(S))
+            A3 = np.zeros(np.shape(S))
+            A2 = np.sqrt(-alpha)
+
+        return [A1,A2,A3]
+    
+    def Acrit3(self,S):
+        t1 = self.t1*(S-self.S0)+self.t1_n
+        t3 = self.t3
+        alpha = t1/t3
+        A1 = np.zeros(np.shape(S))
+        A2 = np.sqrt(-alpha)
+        return [A1,A2]
+        
+   
+
+    
+
+
+def amp2dam(k,amp,funcs,order=5):
+    # Define position vector
+    x = np.linspace(0,4*np.pi/k,1001)
+    h11=funcs['h11']
+    h20=funcs['h20']
+    h22=funcs['h22']
+    h31=funcs['h31']
+    h33=funcs['h33']
+    h40=funcs['h40']
+    h42=funcs['h42']
+    h44=funcs['h44']
+    h51=funcs['h51']
+
+   
+    
+    dam = []
+    for A in amp:
+        b11 = h11.b*A
+        b22 = h22.b[0]*A**2
+        b33 = h33.b[0]*A**3
+        b31 = h31.b*A**3
+        b42 = h42.b[0]*A**4
+        b44 = h44.b[0]*A**4*0
+        b51 = h51.b*A**5*0
+
+        s11 = h11.s*A
+        s22 = h22.s[0]*A**2
+        s33 = h33.s[0]*A**3
+        s31 = h31.s*A**3
+        s42 = h42.s[0]*A**4
+        s44 = h44.s[0]*A**4*0
+        s51 = h51.s*A**5*0
+        if order == 1:
+            surf = -4/d_s + (A*h11.s*np.cos(k*x))
+            #surf = ((A*(h11.s)*np.cos(k*x)+(A**2*(h22.s)+A**4*(h42.s))*np.cos(2*k*x)+A**3*(h33.s)*np.cos(3*k*x)))+(1-stream.d_ice)
+            #bot =  ((A*(h11.b)*np.cos(k*x)+(A**2*(h22.b)+A**4*(h42.b))*np.cos(2*k*x)+A**3*(h33.b)*np.cos(3*k*x)))-stream.d_ice
+            bot =  -4/d_b + (A*h11.b*np.cos(k*x))
+            #h = surf-bot
+            #thick_mean=np.mean(h)
+        elif order == 3:
+            #surf = -4/d_s + ((A*h11.s)*np.cos(k*x)+(A**2*h22.s+0*A**4*h42.s)*np.cos(2*k*x)+A**3*h33.s*np.cos(3*k*x)+0*A**4*h44.s*np.cos(4*k*x))
+            #surf = ((A*(h11.s)*np.cos(k*x)+(A**2*(h22.s)+A**4*(h42.s))*np.cos(2*k*x)+A**3*(h33.s)*np.cos(3*k*x)))+(1-stream.d_ice)
+            #bot = -4/d_b + ((A*h11.b)*np.cos(k*x)+(A**2*h22.b+0*A**4*h42.b)*np.cos(2*k*x)+A**3*h33.b*np.cos(3*k*x)+0*A**4*h44.b*np.cos(4*k*x))
+            #bot = np.minimum(surf,bot)
+            #h = surf-bot
+            #thick_mean=np.mean(h)+(A**2*(h20.s[0]-h20.b[0]))
+            bot =  -4/d_b  + (b11+b31)*np.cos(k*x) + b22*np.cos(2*k*x) + b33*np.cos(3*k*x) 
+            surf = -4/d_s  + (s11+s31)*np.cos(k*x) + s22*np.cos(2*k*x) + s33*np.cos(3*k*x) 
+
+        else:
+            #surf = -4/d_s + ((A*h11.s+A**3*h31.s+A**5*h51.s)*np.cos(k*x)+(A**2*h22.s+A**4*h42.s)*np.cos(2*k*x)+A**3*h33.s*np.cos(3*k*x)+A**4*h44.s*np.cos(4*k*x))
+            #surf = ((A*(h11.s)*np.cos(k*x)+(A**2*(h22.s)+A**4*(h42.s))*np.cos(2*k*x)+A**3*(h33.s)*np.cos(3*k*x)))+(1-stream.d_ice)
+            #bot = -4/d_b + ((A*h11.b+A**3*h31.s+A**5*h51.s)*np.cos(k*x)+(A**2*h22.b+A**4*h42.b)*np.cos(2*k*x)+A**3*h33.b*np.cos(3*k*x)+A**4*h44.b*np.cos(4*k*x))
+            bot  = -4/d_b + (b11+b31+b51)*np.cos(k*x) + (b22+b42)*np.cos(2*k*x) + b33*np.cos(3*k*x)+ b44*np.cos(4*k*x)
+            surf = -4/d_s + (s11+s31+s51)*np.cos(k*x) + (s22+s42)*np.cos(2*k*x) + s33*np.cos(3*k*x)+ s44*np.cos(4*k*x)
+            #bot = np.minimum(surf,bot)
+            #h = surf-bot
+            
+            #thick_mean=np.mean(h)+(A**2*(h20.s[0]-h20.b[0])+A**4*(h40.s[0]-h40.b[0]))
+        #dam1 = 1-np.min(surf-bot)
+        #dam2 = np.max((A*(h11.s-h11.b)*np.cos(k*x)+(A**2*(h22.s-h22.b)+A**4*(h42.s-h42.b))*np.cos(2*k*x)+A**3*(h33.s-h33.b)*np.cos(3*k*x)))
+       
+        #idx1 = np.argmax(surf-bot)
+        #idx2 = np.argmin(surf-bot)
+        #idx=np.argsort(surf-bot)
+        #h = surf-bot
+        #thick_min = h[idx[0]]
+        #thick_max1 = h[idx[-1]]
+        #thick_max2 = h[idx[-2]]
+        #thick_mean = 0.5*(thick_max1+thick_max2)
+        #thick_mean=np.mean(h)+(A**2*(h20.s[0]-h20.b[0])+A**4*(h40.s[0]-h40.b[0]))
+        #print(surf-bot)
+        #id_maxes=np.argmax(surf-bot, np.less)
+        
+        #thick1=surf[id_maxes[0]]-bot[id_maxes[0]]
+        #thick2=surf[id_maxes[1]]-bot[id_maxes[1]]
+        #mean_thick = 0.5*(thick_max1+thick_max2)
+        #dam3=1-(surf[idx2]-bot[idx2])/((surf[idx1]-bot[idx1]))
+        #dam3=1-thick_min
+        #dam3 = 1-((np.min(surf)-np.max(bot)))
+        #dam.append(dam3)
+
+        #h1 = A
+        #h2 = A**2*(h22.s-h22.b)+A**4*(h42.s-h42.b)*(order>3)
+        #h3 = A**3*(h33.s-h33.b)
+        #h0 = A**2*h20.h+A**4*h40.h*(order<3)
+
+        #s1 = A*h11.s
+        #s2 = A**2*(h22.s)+A**4*(h42.s)*(order>3)
+        #s3 = A**3*(h33.s)
+        #s4 = A**4*h44.s*(order>3)
+        #s0 = A**2*h20.s+A**4*h40.s*(order<3)
+        
+        #b1 = A*h11.b
+        #b2 = A**2*(h22.b)+A**4*(h42.b)*(order>3)
+        #b3 = A**3*(h33.b)
+        #b4 = A**4*h44.b*(order>3)
+        #b0 = A**2*h20.b+A**4*h40.b*(order<3)
+
+        
+
+        #damage = (h1-h2+h3)/(1-h0)
+       
+        
+        #thick_min = (np.abs(A*h11.s)+np.abs(A**2*h22.s)+np.abs(A**3*h33.s)-np.abs(A**4*h42.s))
+
+        #dam3 = np.clip(dam3,0,1)
+        #damage = ((1-((s1+s2+s3)-(b1+b2+b3)))/(1+h0))[0]
+        #print(damage,dam3)
+      
+        
+        
+        #print(damage,s1+s2+s3+s0-(b1+b2+b3+b0))
+        #s=np.array([-s1+s2-s3+s4,s1+s2+s3+s4,-s2+s4])+s0
+        #b=np.array([-b1+b2-b3+b4,b1+b2+b3+b4,-b2+b4])+b0
+        #damage_max = np.max(np.abs(s-b))
+        #damage_min = np.minimum(np.min(np.abs(s-b)),1)
+        #print(damage,damage_max)
+        #damage = 1 - (np.min(surf)-np.max(bot))/np.max(surf-bot)
+        #dam.append(damage_max)
+        #dam.append(dam3)
+        #damage = 1-np.min(surf-bot)/np.mean(surf-bot)#/(1-h0[0])
+        
+        #damage = 1 - (np.min(surf)-np.max(bot))/np.mean(surf-bot)
+        #damage = np.maximum(damage,0)
+        #damage = 1 - np.min(surf-bot)/np.max(surf-bot)
+
+        damage = 1 - (np.min(surf)-np.max(bot))/(np.max(surf)-np.min(bot))
+        #damage = 1-np.min(surf-bot)/np.mean(surf-bot)
+        #damage = 1 - (np.min(surf)-np.max(bot))/np.mean(surf-bot)
+        #damage = 0.5*(damage1+damage2)
+
+        #damage= 1-np.min(surf-bot)
+
+        #damage = 1-np.min(surf-bot)/np.median(surf-bot)
+        dam.append(damage)
+
+        
+
+        #dam.append(1-np.min(surf-bot))
+        #dam.append(np.max((A*(h11.s-h11.b)*np.cos(k*x)+(A**2*(h22.s-h22.b)+A**4*(h42.s-h42.b))*np.cos(2*k*x)+A**3*(h33.s-h33.b)*np.cos(3*k*x))))
+    return dam
+
+def amp2vel(k,amp,funcs,order=5):
+    # Define position vector
+    x = np.linspace(0,4*np.pi/k,1001)
+    h11=funcs['h11']
+    h20=funcs['h20']
+    h22=funcs['h22']
+    h31=funcs['h31']
+    h33=funcs['h33']
+    h40=funcs['h40']
+    h42=funcs['h42']
+    h44=funcs['h44']
+    h51=funcs['h51']
+
+   
+    
+    speed_perturb = []
+    for A in amp:
+        v11 = h11.horizontal_vel(z=zs)*A
+        v22 = h22.horizontal_vel(z=zs)*A**2
+        v33 = h33.horizontal_vel(z=zs)*A**3
+        v31 = h31.horizontal_vel(z=zs)*A**3
+        v42 = h42.horizontal_vel(z=zs)*A**4
+        v44 = h44.horizontal_vel(z=zs)*A**4
+       
+        if order == 1:
+            vel = v11*np.cos(k*x)
+        elif order == 3:
+            vel =  (v11+v31)*np.cos(k*x) + v22*np.cos(2*k*x) + v33*np.cos(3*k*x)
+        else:
+            vel  = (v11+v31)*np.cos(k*x) + (v22+v42)*np.cos(2*k*x) + v33*np.cos(3*k*x)+ v44*np.cos(4*k*x)
+        speed_perturb.append(np.max(np.abs(vel)))
+    return speed_perturb
+
+def dam2amp(k,damage,funcs,order=5):
+    """
+    Convert damage to amplitude
+    Note that we do this by interpolating after finding a relationship between
+    linearly spaced amplitudes and damage
+    """
+    h11=funcs['h11']
+    h20=funcs['h20']
+    h22=funcs['h22']
+    h33=funcs['h33']
+    h40=funcs['h40']
+    h42=funcs['h42']
+    A = np.linspace(0,1.0,101)
+    dam = np.abs(np.array(amp2dam(k,A,funcs,order=order)))
+    dam_fun = interp1d(dam,A,kind='linear',bounds_error=False,fill_value='extrapolate')
+    amp = dam_fun(damage)
+    return amp
+
+def topo(k,A,funcs,order=3):
+    h11=funcs['h11']
+    h20=funcs['h20']
+    h22=funcs['h22']
+    h31=funcs['h31']
+    h33=funcs['h33']
+    h40=funcs['h40']
+    h42=funcs['h42']
+    h44=funcs['h44']
+
+    x = np.linspace(0,4*np.pi/k,5001)
+
+    surf = -4/d_s +  ((A*h11.s+A**3*h31.s)*np.cos(k*x)+(A**2*h22.s + 0*(order>3)*A**4*h42.s)*np.cos(2*k*x)+A**3*h33.s*np.cos(3*k*x)+(order>3)*A**4*h44.s*np.cos(4*k*x))
+    bot =  -4/d_b +  ((A*h11.b+A**3*h31.b)*np.cos(k*x)+(A**2*h22.b + 0*(order>3)*A**4*h42.b)*np.cos(2*k*x)+A**3*h33.b*np.cos(3*k*x)+(order>3)*A**4*h44.b*np.cos(4*k*x))
+
+    return x,surf,bot
+
+
+class ParticularSol(object):
+    def __init__(self,psi11):
+        self.C = psi11.C
+        self.psi11 = psi11
+        self.k = psi11.k
+        return
+        
+    def particular_sol(self,z,n):
+        C = self.C
+        k = self.k
+        sol = (-k**2*C[1]*(n - 1)*z**3/(6*n) - k*(n - 1)*(k*C[2] + C[3])*z**2/(2*n))*np.sinh(k*z) + (-k**2*C[3]*(n - 1)*z**3/(6*n) - k*(n - 1)*(k*C[0] + C[1])*z**2/(2*n))*np.cosh(k*z)
+        return  sol
+    
+    def normal_stress(self,k,z,n):
+        C= self.C
+        diff_psi11_1 = -k*((z*(z*C[1] + 3*C[2])*k**2 + (6*z*C[3] + 6*C[0])*k + 6*C[1])*np.cosh(k*z) 
+                       + (z*(z*C[3] + 3*C[0])*k**2 + (6*z*C[1] + 6*C[2])*k + 6*C[3])*np.sinh(k*z))*z*(n - 1)/(6*n)  
+        diff_psi11_3 =  -k**2*(n - 1)*((z**2*(z*C[1] + 3*C[2])*k**3 + (12*z**2*C[3] + 18*z*C[0])*k**2 + (36*z*C[1] + 18*C[2])*k + 24*C[3])*np.cosh(k*z) 
+                                  + (z**2*(z*C[3] + 3*C[0])*k**3 + (12*z**2*C[1] + 18*z*C[2])*k**2 + (36*z*C[3] + 18*C[0])*k + 24*C[1])*np.sinh(k*z))/(6*n)
+        normal_stress =1/k*(-diff_psi11_3+3*k**2*diff_psi11_1)
+        return normal_stress
+    
+    def shear_stress(self,k,z,n):
+        C=self.C
+        diff_psi_2 =  -(((z**2*(z*C[3] + 3*C[0])*k**3 + (9*z**2*C[1] + 12*z*C[2])*k**2 
+                          + (18*z*C[3] + 6*C[0])*k + 6*C[1])*np.cosh(k*z) 
+                          +  np.sinh(k*z)*(z**2*(z*C[1] + 3*C[2])*k**3 + (9*z**2*C[3] + 12*z*C[0])*k**2 
+                                           + (18*z*C[1] + 6*C[2])*k + 6*C[3]))*(n - 1)*k)/(6*n)
+    
+        shear = -(diff_psi_2 + k**2*self.particular_sol(z,n))
+        return shear
+    
+    def stress_rhs(self,n):
+        psi11=self.psi11
+        norm_stress_top = -self.normal_stress(self.k,z=zs,n=n)-4*(1/n - 1)*self.k*psi11.diff(z=zs,deriv=1)
+        norm_stress_bot = -self.normal_stress(self.k,z=zb,n=n)-4*(1/n - 1)*self.k*psi11.diff(z=zb,deriv=1)
+        shear_stress_top = -self.shear_stress(self.k,z=zs,n=n)
+        shear_stress_bot = -self.shear_stress(self.k,z=zb,n=n)
+        #return np.array([-4*(1/n - 1)*self.k*psi11.diff(z=zs,deriv=1)[0],0,-4*(1/n - 1)*self.k*psi11.diff(z=zb,deriv=1)[0],0]).reshape((4,1))
+        return np.array([norm_stress_top[0],shear_stress_top[0],norm_stress_bot[0],shear_stress_bot[0]]).reshape((4,1))
+    
+    def kinematic_rhs(self,n):
+        return np.array([self.k*self.particular_sol(zs,n)[0],self.k*self.particular_sol(zb,n)[0]]).reshape((2,1))
+    
+    def non_newtonian_rhs(self,n):
+        stress_bc = self.stress_rhs(n)
+        kin_bc =self.kinematic_rhs(n)
+        rhs_forcing_non_newtonian = np.vstack((stress_bc,kin_bc))
+        #print(rhs_forcing_non_newtonian)
+        return rhs_forcing_non_newtonian
+
+    
+
+
+
+
+
+
+
+            
+
+
+
+
+    
+
+
+        
+    
+    
+
+    
+
+
+
+    
+
+
+
+
+
+
+   
+    
+   
+
+        
+
+
+
+
+
+       
+   
+
+
+     
+
+
+
+    
+    
+

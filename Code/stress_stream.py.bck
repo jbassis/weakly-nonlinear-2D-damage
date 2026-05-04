@@ -1,0 +1,908 @@
+"""
+Calculate stream function, derivatives of stream function and stresses numerically for weakly non-linear problems
+"""
+
+import numpy as np
+from numpy.linalg import solve
+import pylab as plt
+
+d_ice=900/1020
+xi=1/(1-d_ice)
+zs = 0.5
+zb =-0.5
+
+def psi(k,z):
+    """
+    Calculate stream function 
+    Input: k: wavenumber k, 2*k, etc.
+           z: vertical position 
+    Returns np.array corresponding to coefficients of the 4 unknown coefficients 
+    Example:
+    >>psi(1,1/2)
+    """
+    return np.array([np.cosh(k*z),z*np.sinh(k*z),np.sinh(k*z),z*np.cosh(k*z)])
+
+def diff_psi(k,z,p):
+    """
+    Calculate derivative of stream function 
+    Input: k: wavenumber k, 2*k, etc.
+           z: vertical position 
+           p: order of derivative (1 = 1st derivative, 2 = 2nd derivative)
+    Returns np.array corresponding to coefficients of the 4 unknown coefficients 
+    Example:
+    >>diff_psi(1,-1/2,2)
+    """
+    if np.mod(p,2)==0:
+        t1=k**p*np.cosh(k*z)
+        t2=z*k**p*np.sinh(k*z)+p*k**(p-1)*np.cosh(k*z)
+        t3=k**p*np.sinh(k*z)
+        t4=z*k**p*np.cosh(k*z)+p*k**(p-1)*np.sinh(k*z)
+    else:
+        t1=k**p*np.sinh(k*z)
+        t2=z*k**p*np.cosh(k*z)+p*k**(p-1)*np.sinh(k*z)
+        t3=k**p*np.cosh(k*z)
+        t4=z*k**p*np.sinh(k*z)+p*k**(p-1)*np.cosh(k*z)
+    return np.array([t1,t2,t3,t4])
+
+def stress(k,z,deriv=0):
+    """
+    Input k: wavenumber k, 2*k, etc.
+          z: vertical position
+          deriv: order of derivative
+    """
+    return -1/k*(diff_psi(k,z,3+deriv)+k**2*diff_psi(k,z,1+deriv))
+
+def normal_stress(k,z):
+    return 1/k*(-diff_psi(k,z,3)+3*k**2*diff_psi(k,z,1))
+
+def shear_stress(k,z):
+    return -(diff_psi(k,z,2)+k**2*psi(k,z))
+
+def Scrit_hydro(k):
+    #if damage == 1:
+    return (k - np.sinh(k))*k/(-4 + 4*np.cosh(k))
+    #else:
+    #    return (k**2/(2*np.cosh(k) - 2))
+
+def Scrit(k):
+    return None
+
+def stress_bc(k,S0):
+    eq1=normal_stress(k,zs)
+    eq2=shear_stress(k,zs)
+    eq3=normal_stress(k,zb)
+    eq4=shear_stress(k,zb)
+    rhs = np.array([[-4*S0*xi,-4*k,4*S0/d_ice,-4*k]]).T 
+    return np.vstack((eq1,eq2,eq3,eq4)),rhs
+
+
+def eig(k,S0):
+    A,rhs = stress_bc(k,S0)
+    C=solve(A,rhs)
+    Ws11 = k*(np.dot(C.T,psi(k,zs)))
+    Wb11 = k*(np.dot(C.T,psi(k,zb)))
+    Wh = Ws11-Wb11
+    return Wh-1
+
+
+def h11Hydro(k,S0):
+    A,rhs = stress_bc(k,S0)
+    C=solve(A,rhs)
+    return C,1
+
+def h22Hydro(k,S0,h11,*args):
+    """
+   
+    """
+    Ss = -4*S0/(1-d_ice)
+    Sb = 4*S0/d_ice
+
+    # Part not proportional to amplitude
+    s11 = h11.s
+    b11 = h11.b
+    tau_xx_11s=h11.stress(k,zs,deriv=0)[0]
+    tau_xx_11b=h11.stress(k,zb,deriv=0)[0]
+
+
+    # Stress boundary conditions
+    A,rhs = stress_bc(2*k,S0)
+
+    # Move terms related to h22 to the left hand side
+    A = np.hstack((A,-rhs))
+
+    # Kinematic bc terms
+    eq5 = -2*k*((psi(2*k,z=zs))-(psi(2*k,z=zb)))
+
+    # Move terms related to h22 to the lhs
+    eq5 = (np.append(eq5,1))
+
+    # Created augmented matrix
+    B=np.vstack((A,eq5))
+
+    # Rhs forcing terms related to lower-order forcing
+    stress_bc_rhs = np.array([[ - 4*k**2*s11**2, 
+                                - s11*k*tau_xx_11s + k*s11**2*Ss/2, 
+                                - 4*k**2*b11**2, 
+                                - b11*k*tau_xx_11b + k*b11**2*Sb/2]]).T 
+   
+
+    # Rhs forcing terms for kinematic equation related to lower-order terms
+    kin_bc_rhs=(0.5*h11.diff_psi(k,z=zs,deriv=1)*s11*k) -(0.5*h11.diff_psi(k,z=zb,deriv=1)*b11*k) 
+
+    rhs = np.vstack((stress_bc_rhs,kin_bc_rhs))
+
+    sol=solve(B,rhs)
+    return sol[0:4],sol[-1][0]
+
+def h20Hydro(k,S0,h11):
+    """
+   
+    """
+
+    # Part not proportional to amplitude
+    s11 = h11.s
+    b11 = h11.b
+    C=np.array([0,0,0,0])
+
+
+    # Rhs forcing terms for kinematic equation related to lower-order terms
+    eta20=(0.5*h11.diff_psi(k,z=zs,deriv=1)*s11*k) -(0.5*h11.diff_psi(k,z=zb,deriv=1)*b11*k) 
+    tau_xx_20 = -4*S0*eta20
+    
+    return C,eta20[0]
+
+def amp_eqn_31(k,S0,h11,h22,h20,S=None,amp=1):
+    """
+    Third order amplitude equation
+    Two options:
+    1. Calculate S2 for steady-state solutions
+    2. Calculate dA/dt
+    """
+    if S!=None:
+        S2 = S-S0
+        #print("S2",S2)
+    else:
+        S2 =0
+
+    #Ss = -4*S0/(1-d_ice)
+    #Sb =  4*S0/d_ice
+    # Part not proportional to amplitude
+    s11 = h11.s
+    b11 = h11.b
+   
+
+    s22 = h22.s
+    b22 = h22.b
+
+    s20 = h20.s
+    b20 = h20.b
+
+
+    tau_xx_11s=h11.stress(k,zs,deriv=0)[0]
+    tau_xx_11b=h11.stress(k,zb,deriv=0)[0]
+
+    tau_xx_11zs = h11.stress(k,zs,deriv=1)[0]
+    tau_xx_11zb = h11.stress(k,zb,deriv=1)[0]
+
+    tau_xx_22s=h22.stress(2*k,zs,deriv=0)[0]
+    tau_xx_22b=h22.stress(2*k,zb,deriv=0)[0]
+
+    tau_xx_20=h20.tau_xx_20
+
+
+    # Stress boundary conditions
+    A,rhs = stress_bc(k,S0)
+
+    # Rhs forcing terms related to lower-order forcing
+    stress_bc_rhs = np.array([[-4*k**2*s11**3*xi*S0/4 - (3*tau_xx_11s*k**2*s11**2)/8 - 4*k**2*s11*s20 - 2*k**2*s11*s22,
+                               -k*((3*tau_xx_11zs*s11**2)/8 + (s20 + s22/2)*tau_xx_11s + tau_xx_22s*s11/2 + (4*s20*xi*S0 + 4*1/2*s22*xi*S0 + tau_xx_20)*s11) + s11**3*k**2,
+                                4*k**2*b11**3*S0/d_ice/4 - (3*tau_xx_11b*k**2*b11**2)/8 - 4*k**2*b11*b20 - 2*k**2*b11*b22,
+                               -k*((3*tau_xx_11zb*b11**2)/8 + (b20 + b22/2)*tau_xx_11b + tau_xx_22b*b11/2 + (-4*b20*S0/d_ice - 4*1/2*b22*S0/d_ice + tau_xx_20)*b11) + b11**3*k**2]]).T 
+    
+    stress_bc_rhs_S2 = np.array([[-4*h11.h*S2,
+                               0,
+                               -4*h11.h*S2,
+                               0]]).T 
+    
+    # Rhs forcing terms for kinematic equation related to lower-order terms
+    kin_ode_zs = (3*h11.diff_psi(k,z=zs,deriv=2)*k*s11**2)/8 + (s20 + s22/2)*k*h11.diff_psi(k,z=zs,deriv=1) + h22.diff_psi(2*k,z=zs,deriv=1)*k*s11
+    kin_ode_zb = (3*h11.diff_psi(k,z=zb,deriv=2)*k*b11**2)/8 + (b20 + b22/2)*k*h11.diff_psi(k,z=zb,deriv=1) + h22.diff_psi(2*k,z=zb,deriv=1)*k*b11
+    kin_bc_rhs=kin_ode_zs-kin_ode_zb
+    
+    # The 31 term is fundamentally different because h31=0 and we need to solve for S2
+    if S2 == 0:
+        rhs = np.array([[4*h11.h,0,4*h11.h,0]]).T
+        A = np.hstack((A,rhs))
+         # Kinematic bc terms
+        eq5 = -k*((psi(k,z=zs))-(psi(k,z=zb)))
+        eq5 = (np.append(eq5,0))
+        B=np.vstack((A,eq5))
+        rhs = np.vstack((stress_bc_rhs,kin_bc_rhs))
+
+        sol=solve(B,rhs)
+        C31 = sol[0:4]
+        S2 = sol[-1][0]
+        return C31,S2
+    else:
+        # Part of C31 without S2 (proportional to A^3)
+        C31=solve(A,stress_bc_rhs)
+        # Part of C31 with S2 (propotional to A)
+        C31_S2 = solve(A,stress_bc_rhs_S2)
+        kin_bc = k*((psi(k,z=zs))-(psi(k,z=zb)))
+        # Terms in dAdt proportional to A^3
+        dAdt_3=(np.dot(C31.T,kin_bc)+kin_bc_rhs)[0]
+        # Terms in dAdt proportional to A
+        dAdt_1=(np.dot(C31_S2.T,kin_bc))[0]
+        #print("dAdt",dAdt_1,"A","+",dAdt_3,"A^3")
+        return [dAdt_1,dAdt_3]
+ 
+    
+
+
+def h33Hydro(k,S0,h11,h22):
+    """
+   
+    """
+
+    # Part not proportional to amplitude
+    s11 = h11.s
+    b11 = h11.b
+
+    s22 = h22.s
+    b22 = h22.b
+
+
+    tau_xx_11s=h11.stress(k,zs,deriv=0)[0]
+    tau_xx_11b=h11.stress(k,zb,deriv=0)[0]
+
+    tau_xx_11zs = h11.stress(k,zs,deriv=1)[0]
+    tau_xx_11zb = h11.stress(k,zb,deriv=1)[0]
+
+    tau_xx_22s=h22.stress(2*k,zs,deriv=0)[0]
+    tau_xx_22b=h22.stress(2*k,zb,deriv=0)[0]
+
+
+    # Stress boundary conditions
+    A,rhs = stress_bc(3*k,S0)
+
+    # Rhs forcing terms related to lower-order forcing
+    #stress_bc_rhs = np.array([[ -4*(3*k**2*s11**3*xi*S0)/4 - (9*tau_xx_11s*k**2*s11**2)/8 - 18*k**2*s11*s22, 
+    #                            -(3*k*(tau_xx_11zs*s11**2 + 4*4*s11*xi*S0*s22 + 4*tau_xx_11s*s22 + 4*tau_xx_22s*s11))/8 + s11**3*k**2/3, 
+    #                            4*(3*k**2*b11**3*S0)/4 - (9*tau_xx_11b*k**2*b11**2)/8 - 18*k**2*b11*b22, 
+    #                            -(3*k*(tau_xx_11zb*b11**2 - 4*4*b11*S0*b22 + 4*tau_xx_11b*b22 + 4*tau_xx_22b*b11))/8 + b11**3*k**2/3]]).T 
+
+    # Move terms related to h22 to the left hand side
+    A = np.hstack((A,-rhs))
+
+    # Kinematic bc terms
+    eq5 = -3*k*((psi(3*k,z=zs))-(psi(3*k,z=zb)))
+
+    # Move terms related to h22 to the lhs
+    eq5 = (np.append(eq5,1))
+
+    # Created augmented matrix
+    B=np.vstack((A,eq5))
+
+    # Rhs forcing terms related to lower-order forcing
+    stress_bc_rhs = np.array([[ -4*(3*k**2*s11**3*xi*S0)/4 - (9*tau_xx_11s*k**2*s11**2)/8 - 18*k**2*s11*s22, 
+                                -(3*k*(tau_xx_11zs*s11**2 + 4*4*s11*xi*S0*s22 + 4*tau_xx_11s*s22 + 4*tau_xx_22s*s11))/8 + s11**3*k**2/3, 
+                                4*(3*k**2*b11**3*S0/d_ice)/4 - (9*tau_xx_11b*k**2*b11**2)/8 - 18*k**2*b11*b22, 
+                                -(3*k*(tau_xx_11zb*b11**2 - 4*4*b11*S0*b22/d_ice + 4*tau_xx_11b*b22 + 4*tau_xx_22b*b11))/8 + b11**3*k**2/3]]).T 
+
+    # Rhs forcing terms for kinematic equation related to lower-order terms
+    kin_ode_zs = (0.5*h11.diff_psi(k,z=zs,deriv=1)*s22*k) + h22.diff_psi(2*k,z=zs,deriv=1)*s11*k +h11.diff_psi(k,z=zs,deriv=2)*s11**2*k/8
+    kin_ode_zb = (0.5*h11.diff_psi(k,z=zb,deriv=1)*b22*k) + h22.diff_psi(2*k,z=zb,deriv=1)*b11*k +h11.diff_psi(k,z=zb,deriv=2)*b11**2*k/8
+    
+    kin_bc_rhs=kin_ode_zs-kin_ode_zb
+
+    rhs = np.vstack((stress_bc_rhs,kin_bc_rhs))
+
+    sol=solve(B,rhs)
+    return sol[0:4],sol[-1][0]
+
+def h40Hydro(k,S0,h11,h22,h20,h31):
+    """
+   
+    """
+
+    # Part not proportional to amplitude
+    s11 = h11.s
+    b11 = h11.b
+
+    s22 = h22.s
+    b22 = h22.b
+
+    s20 = h20.s
+    b20 = h20.b 
+   
+    s31 = h31.s
+    b31 = h31.b
+
+
+    C=np.array([0,0,0,0])
+
+
+    # Rhs forcing terms for kinematic equation related to lower-order terms
+    kin_odes = h11.diff_psi(k,z=zs,deriv=3)*k*s11**3/16 \
+             + ((s20 + s22/2)*s11*k*h11.diff_psi(k,z=zs,deriv=2))/2 \
+             + h22.diff_psi(2*k,z=zs,deriv=2)*k*s11**2/4  \
+             + h22.diff_psi(2*k,z=zs,deriv=1)*s22*k \
+             + h31.diff_psi(k,z=zs,deriv=1)*s11*k/2
+
+    kin_odeb = h11.diff_psi(k,z=zb,deriv=3)*k*b11**3/16  \
+             + ((b20 + b22/2)*b11*k*h11.diff_psi(k,z=zb,deriv=2))/2 \
+             + h22.diff_psi(2*k,z=zb,deriv=2)*k*b11**2/4 \
+             + h22.diff_psi(2*k,z=zb,deriv=1)*b22*k \
+             + h31.diff_psi(k,z=zb,deriv=1)*b11*k/2
+
+
+    h40 = (kin_odes-kin_odeb)
+    
+
+
+    
+    tau_xx_40 = -4*S0*h40-4*S2*h20.h
+    
+    return C,h40[0]
+            
+def h42Hydro(k,S0,h11,h20,h22,h31,h33,S2):
+    """
+   
+    """
+
+    # Part not proportional to amplitude
+    s11 = h11.s
+    b11 = h11.b
+
+    s20 = h20.s
+    b20 = h20.b
+
+    s22 = h22.s
+    b22 = h22.b
+
+    s33 = h33.s
+    b33 = h33.b
+
+
+    tau_xx_11s=h11.stress(k,zs,deriv=0)[0]
+    tau_xx_11b=h11.stress(k,zb,deriv=0)[0]
+
+    tau_xx_11zs = h11.stress(k,zs,deriv=1)[0]
+    tau_xx_11zb = h11.stress(k,zb,deriv=1)[0]
+
+    tau_xx_11zzs = h11.stress(k,zs,deriv=2)[0]
+    tau_xx_11zzb = h11.stress(k,zb,deriv=2)[0]
+
+    tau_xx_22s=h22.stress(2*k,zs,deriv=0)[0]
+    tau_xx_22b=h22.stress(2*k,zb,deriv=0)[0]
+
+    tau_xx_22zs = h22.stress(2*k,zs,deriv=1)[0]
+    tau_xx_22zb = h22.stress(2*k,zb,deriv=1)[0]
+
+    tau_xx_31s=h31.stress(k,zs,deriv=0)[0]
+    tau_xx_31b=h31.stress(k,zb,deriv=0)[0]
+
+    tau_xx_33s=h33.stress(3*k,zs,deriv=0)[0]
+    tau_xx_33b=h33.stress(3*k,zb,deriv=0)[0]
+
+    tau_xx_20=h20.tau_xx_20
+
+
+    # Stress boundary conditions
+    A,rhs = stress_bc(2*k,S0)
+
+    # Rhs forcing terms related to lower-order forcing
+    stress_bc_rhs = np.array([[ -(2*tau_xx_11zs*k**2*s11**3)/3 - 2*k**2*s11*(s20 + s22)*tau_xx_11s - tau_xx_22s*k**2*s11**2 + ((-4*2*s20*xi*S0 - 4*2*s22*xi*S0 - tau_xx_20)*s11**2 - 8*(s33)*s11 - 16*s20*s22)*k**2 - 4*xi*s22*S2 - (2*s11**4*k**4)/3,
+                               ((- s33)*tau_xx_11s - s11**3*tau_xx_11zzs/6 - s11*(s20 + s22)*tau_xx_11zs - tau_xx_22zs*s11**2/2 - 2*tau_xx_22s*s20 - tau_xx_31s*s11 - tau_xx_33s*s11 - 4*s11**2*xi*S2/2 - 4*xi*S0*(s33)*s11 - 4*2*s22*s20*xi*S0 - 2*s22*tau_xx_20)*k +(-4*xi*s11**4*S0*k**3/12 - 4*s11**2*k**3*s22),
+                               -(2*tau_xx_11zb*k**2*b11**3)/3 - 2*k**2*b11*(b20 + b22)*tau_xx_11b - tau_xx_22b*k**2*b11**2 + ((4*2*b20*S0/d_ice + 4*2*b22*S0/d_ice - tau_xx_20)*b11**2 - 8*(b33)*b11 - 16*b20*b22)*k**2 + 4*b22*S2/d_ice - (2*b11**4*k**4)/3,
+                               ((- b33)*tau_xx_11b - b11**3*tau_xx_11zzb/6 - b11*(b20 + b22)*tau_xx_11zb - tau_xx_22zb*b11**2/2 - 2*tau_xx_22b*b20 - tau_xx_31b*b11 - tau_xx_33b*b11 + 4*b11**2*S2/2/d_ice + 4*S0*(b33)*b11/d_ice + 4*2*b22*b20*S0/d_ice - 2*b22*tau_xx_20)*k + (4*b11**4*S0*k**3/12/d_ice - 4*b11**2*k**3*b22)]]).T 
+    # Move terms related to h22 to the left hand side
+    A = np.hstack((A,-rhs))
+
+    # Kinematic bc terms
+    eq5 = -4*k*((psi(2*k,z=zs))-(psi(2*k,z=zb)))
+
+    # Move terms related to h22 to the lhs
+    eq5 = (np.append(eq5,2))
+
+    # Created augmented matrix
+    B=np.vstack((A,eq5))
+
+   
+
+    # Rhs forcing terms for kinematic equation related to lower-order terms
+    kin_ode_zs = -s22*s11*h11.diff_psi(k,z=zs,deriv=2)*k - s20*s11*h11.diff_psi(k,z=zs,deriv=2)*k - h11.diff_psi(k,z=zs,deriv=1)*s33*k \
+                 - h31.diff_psi(k,z=zs,deriv=1)*s11*k - 3*h33.diff_psi(3*k,z=zs,deriv=1)*s11*k - h22.diff_psi(2*k,z=zs,deriv=2)*k*s11**2 \
+                 - h11.diff_psi(k,z=zs,deriv=3)*k*s11**3/6  - 4*h22.diff_psi(2*k,z=zs,deriv=1)*s20*k 
+                 
+    kin_ode_zb = -b22*b11*h11.diff_psi(k,z=zb,deriv=2)*k - b20*b11*h11.diff_psi(k,z=zb,deriv=2)*k - h11.diff_psi(k,z=zb,deriv=1)*b33*k \
+                 -h31.diff_psi(k,z=zb,deriv=1)*b11*k - 3*h33.diff_psi(3*k,z=zb,deriv=1)*b11*k - h22.diff_psi(2*k,z=zb,deriv=2)*k*b11**2 \
+                 - h11.diff_psi(k,z=zb,deriv=3)*k*b11**3/6  - 4*h22.diff_psi(2*k,z=zb,deriv=1)*b20*k 
+                
+
+    kin_bc_rhs=-kin_ode_zs+kin_ode_zb
+
+    rhs = np.vstack((stress_bc_rhs,kin_bc_rhs))
+
+    sol=solve(B,rhs)
+    return sol[0:4],sol[-1][0]
+
+
+
+class hTermHydroStatic(object):
+    def __init__(self,k,S0,C,h=1):
+        self.h=h
+        self.s=(1-d_ice)*h
+        self.b=-d_ice*h
+        #C,A=h(k,S0,args)
+        self.C=C
+        return
+        
+    def psi(self,k,z):
+        return  (np.dot(self.C.T,psi(k,z)))
+    
+    def stress(self,k,z,deriv):
+        return  (np.dot(self.C.T,stress(k,z,deriv)))
+    
+    def diff_psi(self,k,z,deriv):
+        return  (np.dot(self.C.T,diff_psi(k,z,deriv)))
+    
+def amp_eqn_51(k,S0,h11,h22,h20,h31,h33,h40,h42,S2,S):
+    """
+    Fifth order amplitude equation
+    Two options:
+    1. Calculate S4 for steady-state solutions
+    2. Calculate dA/dt
+    """
+
+    #S4 = S-S2-S0
+   
+    S0s= -4*S0/(1-d_ice)
+    S0b=  4*S0/d_ice 
+    S2s = -4*S2/(1-d_ice)
+    S2b = 4*S2/(d_ice)
+    # Part not proportional to amplitude
+    s11 = h11.s
+    b11 = h11.b
+   
+
+    s22 = h22.s
+    b22 = h22.b
+
+    s20 = h20.s
+    b20 = h20.b
+
+    s31 = h31.s
+    b31 = h31.b
+
+    s33 = h33.s
+    b33 = h33.b
+
+    s40 = h40.s
+    b40 = h40.b
+
+    s42 = h42.s
+    b42 = h42.b
+
+
+    tau_xx_11s=h11.stress(k,zs,deriv=0)[0]
+    tau_xx_11b=h11.stress(k,zb,deriv=0)[0]
+
+    tau_xx_11zs = h11.stress(k,zs,deriv=1)[0]
+    tau_xx_11zb = h11.stress(k,zb,deriv=1)[0]
+
+    tau_xx_11zzs = h11.stress(k,zs,deriv=2)[0]
+    tau_xx_11zzb = h11.stress(k,zb,deriv=2)[0]
+
+    tau_xx_11zzzs = h11.stress(k,zs,deriv=3)[0]
+    tau_xx_11zzzb = h11.stress(k,zb,deriv=3)[0]
+
+    tau_xx_22s=h22.stress(2*k,zs,deriv=0)[0]
+    tau_xx_22b=h22.stress(2*k,zb,deriv=0)[0]
+
+    tau_xx_22zs=h22.stress(2*k,zs,deriv=1)[0]
+    tau_xx_22zb=h22.stress(2*k,zb,deriv=1)[0]
+
+    tau_xx_22zzs=h22.stress(2*k,zs,deriv=2)[0]
+    tau_xx_22zzb=h22.stress(2*k,zb,deriv=2)[0]
+
+    tau_xx_31s=h31.stress(k,zs,deriv=0)[0]
+    tau_xx_31b=h31.stress(k,zb,deriv=0)[0]
+
+    tau_xx_31zs=h31.stress(k,zs,deriv=1)[0]
+    tau_xx_31zb=h31.stress(k,zb,deriv=1)[0]
+
+    tau_xx_33s=h33.stress(3*k,zs,deriv=0)[0]
+    tau_xx_33b=h33.stress(3*k,zb,deriv=0)[0]
+
+    tau_xx_33zs=h33.stress(3*k,zs,deriv=1)[0]
+    tau_xx_33zb=h33.stress(3*k,zb,deriv=1)[0]
+
+    tau_xx_42s=h42.stress(2*k,zs,deriv=0)[0]
+    tau_xx_42b=h42.stress(2*k,zb,deriv=0)[0]
+
+    tau_xx_20=h20.tau_xx_20
+
+    tau_xx_40=h40.tau_xx_40
+
+
+    # Stress boundary conditions
+    A,rhs = stress_bc(k,S0)
+
+    # Rhs forcing terms related to lower-order forcing
+    # We will separate into terms proportional to A^5
+    
+    #fns = -(5*tau_xx_11zzs*k**2*s11**4)/64 - (3*k**2*(s20 + (2*s22)/3)*s11**2*tau_xx_11zs)/4 - k**2*tau_xx_22zs*s11**3/6 \
+    #      - k**2*((s33)*s11 + 2*s20**2 + 2*s20*s22 + s22**2)*tau_xx_11s/4 - k**2*s11*(s20 + s22)*tau_xx_22s/2 \
+    #      - (3*tau_xx_31s*k**2*s11**2)/8 - tau_xx_33s*k**2*s11**2/8 + ((-4*s11**3*xi*S2 - 4*xi*S0*(s33)*s11**2  
+    #                                                                    + 2*(-4*xi*s22**2*S0 + (-(4*xi)*2*s20*S0 
+    #                                                                    - tau_xx_20)*s22 - (4*xi)*2*S0*s20**2 - 2*tau_xx_20*s20 
+    #                                                                    - 8*(s40 + s42/2))*s11 - 8*((s33)*s22 ))*k**2)/4 \
+    #      - (s20 - (3*s22)/2)*s11**3*k**4 + (-k**4*tau_xx_11s*s11**4/24 - 4*xi*s11**5*k**4*S0/24 - (17*s11**3*k**4*s22)/6)
+    #print(fns)
+    fns = -(5*tau_xx_11zzs*k**2*s11**4)/64 - (3*k**2*(s20 + (2*s22)/3)*s11**2*tau_xx_11zs)/4 - k**2*tau_xx_22zs*s11**3/6 \
+          - k**2*((s33)*s11 + 2*s20**2 + 2*s20*s22 + s22**2)*tau_xx_11s/4 - k**2*s11*(s20 + s22)*tau_xx_22s/2 \
+          - (3*tau_xx_31s*k**2*s11**2)/8 - tau_xx_33s*k**2*s11**2/8 \
+          + ((s11**3*S2s + S0s*(s33)*s11**2 + 2*(s22**2*S0s + (2*s20*S0s - tau_xx_20)*s22 + 2*S0s*s20**2 - 2*tau_xx_20*s20 - 8*(s40 + s42/2))*s11 - 8*((s33)*s22 + 2*0*s20))*k**2)/4  \
+          - (s20 - (3*s22)/2)*s11**3*k**4 + (-k**4*tau_xx_11s*s11**4/24 + s11**5*k**4*S0s/24 - (17*s11**3*k**4*s22)/6)
+    
+    #fns_S2 = k**2*s11**3*S2s/4
+    #print(fns+fns_S2)
+    #fss = -k*((5*s11**4*tau_xx_11zzzs)/96 + (3*s11**2*(s20 + (2*s22)/3)*tau_xx_11zzs)/4 
+    #         + tau_xx_22zzs*s11**3/6 + (-(3*s11**4*k**2)/8 + ((s33 )*s11)/2 + s20*s22 + s20**2 + s22**2/2)*tau_xx_11zs 
+    #        + s11*(s20 + s22)*tau_xx_22zs + (3*s11**2*tau_xx_31zs)/4 
+    #       + s11**2*tau_xx_33zs/4 + (-k**2*(s22/2 + s20)*s11**2 + 2*s40 + s42)*tau_xx_11s 
+    #      + (-s11**3*k**2/2 + s33)*tau_xx_22s + (2*s20 + s22)*tau_xx_31s 
+    #     + tau_xx_33s*s22 + s11*tau_xx_42s + k**2*(-tau_xx_20 + 1/2*s22*S0 + s20*S0)*s11**3 
+    #    + (-2*s20*S2 - s22*S2 + (-2*s40 - s42)*S0 + 2*tau_xx_40)*s11 
+    #   - S0*(s33)*s22)/2 + (-tau_xx_11s*k**3*s11**2*s22/8 + (3*tau_xx_11s*k**3*s11**2*s20)/4 
+    #                       - s11**3*k**3*s20*S0/2 - s11**3*k**3*s22*S0/24 + 3*k**3*s11**2*s33 
+    #                      - 8*s11*s22**2*k**3 + s11**5*k**5/12 + s11**3*k**3*tau_xx_20/2 
+    #                     + (23*tau_xx_11zs*k**3*s11**4)/96 
+    #                    + (13*tau_xx_22s*s11**3*k**3)/24)
+    
+    fnb = -(5*tau_xx_11zzb*k**2*b11**4)/64 - (3*k**2*(b20 + (2*b22)/3)*b11**2*tau_xx_11zb)/4 - k**2*tau_xx_22zb*b11**3/6 \
+          - k**2*((b33)*b11 + 2*b20**2 + 2*b20*b22 + b22**2)*tau_xx_11b/4 - k**2*b11*(b20 + b22)*tau_xx_22b/2 \
+          - (3*tau_xx_31b*k**2*b11**2)/8 - tau_xx_33b*k**2*b11**2/8 \
+          + ((4*b11**3*(S2/d_ice) + 4*(S0/d_ice)*b33*b11**2 + 2*(-4*xi*b22**2*(-S0/xi/d_ice) + (-(4*xi)*2*b20*(-S0/xi/d_ice) - tau_xx_20)*b22 - (4*xi)*2*(-S0/xi/d_ice)*b20**2 - 2*tau_xx_20*b20 - 8*(b40 + b42/2))*b11 - 8*((b33)*b22 ))*k**2)/4 \
+          - (b20 - (3*b22)/2)*b11**3*k**4 + (-k**4*tau_xx_11b*b11**4/24 - 4*xi*b11**5*k**4*(-S0/xi/d_ice)/24 - (17*b11**3*k**4*b22)/6)
+    
+    #fnb_S2 = k**2*4*b11**3*(S2/d_ice)/4
+    
+    #print(fnb+fnb_S2)
+    #fnb = -(5*tau_xx_11zzb*k**2*b11**4)/64 - (3*k**2*(b20 + (2*b22)/3)*b11**2*tau_xx_11zb)/4 - k**2*tau_xx_22zb*b11**3/6 \
+    #      - k**2*((b33)*b11 + 2*b20**2 + 2*b20*b22 + b22**2)*tau_xx_11b/4 - k**2*b11*(b20 + b22)*tau_xx_22b/2 \
+    #      - (3*tau_xx_31b*k**2*b11**2)/8 - tau_xx_33b*k**2*b11**2/8 \
+    #      + ((b11**3*S2b + S0b*(b33)*b11**2 + 2*(b22**2*S0b + (2*b20*S0b - tau_xx_20)*b22 + 2*S0b*b20**2 - 2*tau_xx_20*b20 - 8*(b40 + b42/2))*b11 - 8*((b33)*b22))*k**2)/4  \
+    #      - (b20 - (3*b22)/2)*b11**3*k**4 + (-k**4*tau_xx_11b*b11**4/24 + b11**5*k**4*S0b/24 - (17*b11**3*k**4*b22)/6)
+    #print(fnb)
+
+    #fss = -k*((5*s11**4*tau_xx_11zzzs)/96 + (3*s11**2*(s20 + (2*s22)/3)*tau_xx_11zzs)/4 
+    #          + tau_xx_22zzs*s11**3/6 + (-(3*s11**4*k**2)/8 + ((s33)*s11)/2 + s20*s22 + s20**2 + s22**2/2)*tau_xx_11zs 
+    #          + s11*(s20 + s22)*tau_xx_22zs + (3*s11**2*tau_xx_31zs)/4 + s11**2*tau_xx_33zs/4 
+    #          + (-k**2*(s22/2 + s20)*s11**2 + 2*s40 + s42)*tau_xx_11s + (-s11**3*k**2/2+ s33)*tau_xx_22s 
+    #          + (2*s20 + s22)*tau_xx_31s + tau_xx_33s*s22 + s11*tau_xx_42s + k**2*(-tau_xx_20 + 1/2*s22*S0s + s20*S0s)*s11**3  
+    #          + (-2*S2s*s20 - s22*S2s + (-2*s40 - s42)*S0s + 2*tau_xx_40)*s11 
+    #          - S0s*(s33)*s22)/2 + (-tau_xx_11s*k**3*s11**2*s22/8 + (3*tau_xx_11s*k**3*s11**2*s20)/4 - s11**3*k**3*s20*S0s/2 
+    #                                - s11**3*k**3*s22*S0s/24 + 3*k**3*s11**2*s33 - 8*s11*s22**2*k**3 + s11**5*k**5/12 
+    #                                + s11**3*k**3*tau_xx_20/2 + (23*tau_xx_11zs*k**3*s11**4)/96 + (13*tau_xx_22s*s11**3*k**3)/24)
+    #print(fss)
+   
+
+
+    fss = -k*((5*s11**4*tau_xx_11zzzs)/96 + (3*s11**2*(s20 + (2*s22)/3)*tau_xx_11zzs)/4 
+              + tau_xx_22zzs*s11**3/6 + (-(3*s11**4*k**2)/8 + ((s33)*s11)/2 + s20*s22 + s20**2 
+                                         + s22**2/2)*tau_xx_11zs + s11*(s20 + s22)*tau_xx_22zs 
+                                         + (3*s11**2*tau_xx_31zs)/4 + s11**2*tau_xx_33zs/4 
+                                         + (-k**2*(s22/2 + s20)*s11**2 + 2*s40 + s42)*tau_xx_11s + (-s11**3*k**2/2  + s33)*tau_xx_22s 
+                                         + (2*s20 + s22)*tau_xx_31s + tau_xx_33s*s22 
+                                         + s11*tau_xx_42s + k**2*(-tau_xx_20 + 1/2*s22*(-4*xi*S0) + s20*(-4*xi*S0))*s11**3 
+                                         + (-2*s20*(-4*xi*S2) - s22*(-4*xi*S2) 
+                                         + (-2*s40 - s42)*(-4*xi*S0) + 2*tau_xx_40)*s11 - (-4*xi*S0)*(s33)*s22 )/2 + (-tau_xx_11s*k**3*s11**2*s22/8 
+                                                                                                                      + (3*tau_xx_11s*k**3*s11**2*s20)/4 
+                                                                                                                      - s11**3*k**3*s20*(-4*xi*S0)/2 
+                                                                                                                      - s11**3*k**3*s22*(-4*xi*S0)/24 
+                                                                                                                      + 3*k**3*1*s11**2*s33 
+                                                                                                                      - 8*s11*s22**2*k**3*1 
+                                                                                                                      + s11**5*k**5/12 
+                                                                                                                      + s11**3*k**3*tau_xx_20/2 
+                                                                                                                      + (23*tau_xx_11zs*k**3*s11**4)/96 
+                                                                                                                      + (13*tau_xx_22s*s11**3*k**3)/24)
+    #fss_S2=-k*(-2*s20*(-4*xi*S2) - s22*(-4*xi*S2))/2*s11
+    #print(fss+fss_S2)
+
+    #fsb = -k*((5*b11**4*tau_xx_11zzzb)/96 + (3*b11**2*(b20 + (2*b22)/3)*tau_xx_11zzb)/4 + tau_xx_22zzb*b11**3/6 
+    #          + (-(3*b11**4*k**2)/8 + ((b33 + 3*0)*b11)/2 + b20*b22 + b20**2 + b22**2/2)*tau_xx_11zb + b11*(b20 + b22)*tau_xx_22zb 
+    #          + (3*b11**2*tau_xx_31zb)/4 + b11**2*tau_xx_33zb/4 + (-k**2*(b22/2 + b20)*b11**2 + 2*b40 + b42)*tau_xx_11b 
+    #          + (-b11**3*k**2/2  + b33)*tau_xx_22b + (2*b20 + b22)*tau_xx_31b + tau_xx_33b*b22 + b11*tau_xx_42b 
+    #          + k**2*(-tau_xx_20 + 1/2*b22*(-4*xi*(-S0/xi/d_ice)) + b20*(-4*xi*(-S0/xi/d_ice)))*b11**3 
+    #          + (-2*b20*(-4*xi*(-S2/xi/d_ice)) - b22*(-4*xi*(-S2/xi/d_ice)) + (-2*b40 - b42)*(-4*xi*(-S0/xi/d_ice)) + 2*tau_xx_40)*b11 
+    #          - (-4*xi*(-S0/xi/d_ice))*(b33)*b22  )/2 + \
+    #          (-tau_xx_11b*k**3*b11**2*b22/8 + (3*tau_xx_11b*k**3*b11**2*b20)/4 - b11**3*k**3*b20*(-4*xi*(-S0/xi/d_ice))/2 
+    #           - b11**3*k**3*b22*(-4*xi*(-S0/xi/d_ice))/24 + 3*k**3*1*b11**2*b33 - 8*b11*b22**2*k**3
+    #           + b11**5*k**5/12 + b11**3*k**3*tau_xx_20/2 + (23*tau_xx_11zb*k**3*b11**4)/96 + (13*tau_xx_22b*b11**3*k**3)/24)
+    #print(fsb)
+    
+    fsb = -k*((5*b11**4*tau_xx_11zzzb)/96 + (3*b11**2*(b20 + (2*b22)/3)*tau_xx_11zzb)/4 
+              + tau_xx_22zzb*b11**3/6 + (-(3*b11**4*k**2)/8 + ((b33)*b11)/2 + b20*b22 + b20**2 + b22**2/2)*tau_xx_11zb 
+              + b11*(b20 + b22)*tau_xx_22zb + (3*b11**2*tau_xx_31zb)/4 + b11**2*tau_xx_33zb/4 
+              + (-k**2*(b22/2 + b20)*b11**2 + 2*b40 + b42)*tau_xx_11b + (-b11**3*k**2/2+ b33)*tau_xx_22b 
+              + (2*b20 + b22)*tau_xx_31b + tau_xx_33b*b22 + b11*tau_xx_42b + k**2*(-tau_xx_20 + 1/2*b22*S0b + b20*S0b)*b11**3  
+              + (-2*S2b*b20 - b22*S2b + (-2*b40 - b42)*S0b + 2*tau_xx_40)*b11 
+              - S0b*(b33)*b22)/2 + (-tau_xx_11b*k**3*b11**2*b22/8 + (3*tau_xx_11b*k**3*b11**2*b20)/4 - b11**3*k**3*b20*S0b/2 
+                                    - b11**3*k**3*b22*S0b/24 + 3*k**3*b11**2*b33 - 8*b11*b22**2*k**3 + b11**5*k**5/12 
+                                    + b11**3*k**3*tau_xx_20/2 + (23*tau_xx_11zb*k**3*b11**4)/96 + (13*tau_xx_22b*b11**3*k**3)/24)
+    #fsb_S2 = -k*(-2*S2b*b20- b22*S2b)*b11/2
+    #print(fsb+fsb_S2)
+    # Terms proportional to A^3
+
+    # Terms proportional to A
+    #print(fns)
+    #print(fss)
+    S4 = 1
+    stress_bc_rhs = np.array([[fns,fss,fnb,fsb]]).T 
+    stress_bc_rhs_S2 = -np.array([[-4*h11.h*S2,
+                                  0,
+                                  -4*h11.h*S2,
+                                  0]]).T
+    
+
+    stress_bc_rhs_S4 = np.array([[-4*h11.h*(S-S0),
+                               0,
+                               -4*h11.h*(S-S0),
+                               0]]).T 
+    
+    #print(stress_bc_rhs)
+    kin_ode_zs = -5*(s11**2 + (72*s20)/5 + (48*s22)/5)*s11**2*k*h11.diff_psi(k,z=zs,deriv=3)/192 - h22.diff_psi(2*k,z=zs,deriv=3)*k*s11**3/6 \
+                 - 3*((s31 + s33/3)*s11 + (2*s20**2)/3 + (2*s22*s20)/3 + s22**2/3)*k*h11.diff_psi(k,z=zs,deriv=2)/4 \
+                 - k*s11*(s20 + s22)*h22.diff_psi(2*k,z=zs,deriv=2) - (3*s11**2*h31.diff_psi(k,z=zs,deriv=2)*k)/8 \
+                 - (3*s11**2*h33.diff_psi(3*k,z=zs,deriv=2)*k)/8 - (s42/2 + s40)*k*h11.diff_psi(k,z=zs,deriv=1) \
+                 - k*(s33)*h22.diff_psi(2*k,z=zs,deriv=1) - (s20 + s22/2)*k*h31.diff_psi(k,z=zs,deriv=1) \
+                 - (3*h33.diff_psi(3*k,z=zs,deriv=1)*k*s22)/2 - h11.psi(k,z=zs)*h42.diff_psi(2*k,z=zs,deriv=1)*k #- psi51*k
+    
+    kin_ode_zb =-5*(b11**2 + (72*b20)/5 + (48*b22)/5)*b11**2*k*h11.diff_psi(k,z=zb,deriv=3)/192 - h22.diff_psi(2*k,z=zb,deriv=3)*k*b11**3/6 \
+                - 3*((b31 + b33/3)*b11 + (2*b20**2)/3 + (2*b22*b20)/3 + b22**2/3)*k*h11.diff_psi(k,z=zb,deriv=2)/4 \
+                - k*b11*(b20 + b22)*h22.diff_psi(2*k,z=zb,deriv=2) - (3*b11**2*h31.diff_psi(k,z=zb,deriv=2)*k)/8 \
+                - (3*b11**2*h33.diff_psi(3*k,z=zb,deriv=2)*k)/8 - (b42/2 + b40)*k*h11.diff_psi(k,z=zb,deriv=1) \
+                - k*(b31 + b33)*h22.diff_psi(2*k,z=zb,deriv=1) - (b20 + b22/2)*k*h31.diff_psi(k,z=zb,deriv=1) \
+                - (3*h33.diff_psi(3*k,z=zb,deriv=1)*k*b22)/2 - h11.psi(k,z=zb)*h42.diff_psi(2*k,z=zb,deriv=1)*k #- psi51*k
+    
+    #print(kin_ode_zs)
+    #print(kin_ode_zb)
+
+    # Minus sign because we moved these terms to the rhs
+    kin_bc_rhs = (kin_ode_zs-kin_ode_zb)
+    #print(kin_ode_zb)
+
+    kin_bc = k*((psi(k,z=zs))-(psi(k,z=zb)))
+    
+
+    # Part of C31 without S2 (proportional to A^5)
+    C51=solve(A,stress_bc_rhs)
+    #print(C51)
+ 
+
+    # Part of C31 with S2 (propotional to A^3)
+    C51_S2 = solve(A,stress_bc_rhs_S2)
+    # Part of C31 with S4 (propotional to A)
+    C51_S4 = solve(A,stress_bc_rhs_S4)
+    #print(C31_S4)
+
+    # Terms in dAdt proportional to A^5 (negative kin_bc_rhs because we move it to the rhs)
+    dAdt_5=(np.dot(C51.T,kin_bc)-kin_bc_rhs)[0]
+    # Terms in dAdt proportional to A^3
+    dAdt_3=(np.dot(C51_S2.T,kin_bc))[0]
+    # Terms in dAdt proportional to A
+    dAdt_1=(np.dot(C51_S4.T,kin_bc))[0]
+
+    #print(kin_bc_rhs - np.dot(C51.T,kin_bc))
+    return [dAdt_1,dAdt_3,dAdt_5]
+
+
+
+
+
+    
+    return None
+    
+""" 
+    stress_bc_rhs_S2 = np.array([[-4*h11.h*S4,
+                               0,
+                               -4*h11.h*S4,
+                               0]]).T 
+    
+    # Rhs forcing terms for kinematic equation related to lower-order terms
+    
+    kin_bc_rhs=kin_ode_zs-kin_ode_zb
+    
+   
+    # Part of C31 without S2 (proportional to A^5)
+    C51=solve(A,stress_bc_rhs)
+    # Part of C31 with S2 (propotional to A^3)
+    C31_S2 = solve(A,stress_bc_rhs_S2)
+    # Part of C31 with S4 (propotional to A)
+    C31_S4 = solve(A,stress_bc_rhs_S2)
+    
+    kin_bc = k*((psi(k,z=zs))-(psi(k,z=zb)))
+    # Terms in dAdt proportional to A^3
+    dAdt_5=(np.dot(C31.T,kin_bc)+kin_bc_rhs)[0]
+    # Terms in dAdt proportional to A^3
+    dAdt_3=(np.dot(C31_S2.T,kin_bc)+kin_bc_rhs)[0]
+    # Terms in dAdt proportional to A
+    dAdt_1=(np.dot(C31_S4.T,kin_bc))[0]
+    return [dAdt_1,dAdt_3,dAdt_5]
+"""
+
+
+
+
+
+
+
+#N=101    
+#k=np.linspace(0.01,3*np.pi,N)
+#eta22=np.zeros((N,1))
+#eta20=np.zeros((N,1))
+#tau_xx_20=np.zeros((N,1))
+#for i in range(len(k)):
+#    S0=Scrit_hydro(k[i])
+ #   C1,A=h11(k[i],S0)
+ #   h11_hydro=hTermHydroStatic(k[i],S0,C1)
+ #   C2,h2=h22(k[i],S0,h11_hydro)
+ #   eta22[i]=h2
+ #   eta20[i],tau_xx_20[i]=h20(k[i],S0,h11_hydro)
+#h22_hydro=hTermHydroStatic(k[i],S0,C2)
+
+#plt.clf();plt.plot(k,eta20);plt.show();
+
+
+
+
+
+
+kk=np.linspace(0.01,5,51)
+SS=np.linspace(-5,5,5001)
+n = 1e12
+#a = np.linspace(0,1,11)
+k = 2*np.pi/3
+k = np.pi/4
+A2 = [];A22=[]
+A3 = [];A5=[]
+A4 = [];A44=[]
+#SS = [2]
+for S in SS:
+    #print(S)
+    S0=Scrit_hydro(k)
+    C11,h11=h11Hydro(k,S0)
+    h11_hydro=hTermHydroStatic(k,S0,C11,h11)
+    C22,h22=h22Hydro(k,S0,h11_hydro)
+    h22_hydro=hTermHydroStatic(k,S0,C22,h22)
+    C20,h20=h20Hydro(k,S0,h11_hydro)
+    h20_hydro=hTermHydroStatic(k,S0,C20,h20)
+    h20_hydro.tau_xx_20 = -4*S0*h20
+    C33,h33=h33Hydro(k,S0,h11_hydro,h22_hydro)
+    h33_hydro=hTermHydroStatic(k,S0,C33,h33)
+    C31,S2=amp_eqn_31(k,S0,h11_hydro,h22_hydro,h20_hydro)
+    #print("S2",S2)
+    h31_hydro=hTermHydroStatic(k,S0,C31,0)
+    C40,h40=h40Hydro(k,S0,h11_hydro,h22_hydro,h20_hydro,h31_hydro)
+    h40_hydro=hTermHydroStatic(k,S0,C40,h40)
+    h40_hydro.tau_xx_40 = -4*S0*h40-4*S2*h20
+    C42,h42=h42Hydro(k,S0,h11_hydro,h20_hydro,h22_hydro,h31_hydro,h33_hydro,S2)
+    h42_hydro=hTermHydroStatic(k,S0,C42,h42)
+    #dAdt=amp_eqn_31(k,S0,h11_hydro,h22_hydro,h20_hydro,S=S)
+    #S = 2
+    
+    
+    #Acrit2= np.sqrt(-beta*alpha)/beta
+    #Acrit3=-np.sqrt(-beta*alpha)/beta
+    #print(0,Acrit2)
+    #A2.append(Acrit2)
+    #print("3rd order dAdt",dAdt[0]*amp+dAdt[1]*amp**3)
+    #dAdt=amp_eqn_31(k,S0,h11_hydro,h22_hydro,h20_hydro,S=S)
+    #alpha = dAdt[0];beta=dAdt[1]
+    #Acrit2= np.sqrt(-beta*alpha)/beta
+
+    dAdt=amp_eqn_51(k,S0,h11_hydro,h22_hydro,h20_hydro,h31_hydro,h33_hydro,h40_hydro,h42_hydro,S2,S=S)
+    print(dAdt)
+    
+    #dAdt1 = (-0.9817893073130360*S + 0.6556458778185741 + 0.05523011875346279/n)
+    #dAdt3 = -0.5580572834668611
+    #dAdt5 = -30.83580927038039
+    #dAdt = [dAdt1,dAdt3,dAdt5]
+    #print(dAdt)
+   
+    alpha=dAdt[0]+1
+    beta=dAdt[1]
+    gamma=dAdt[2]
+   
+    #Acrit4 = np.sqrt(-2*gamma*(beta + np.sqrt(-4*alpha*gamma + beta**2)))/(2*gamma)
+    #print(Acrit4)
+    
+    Acrit2 = np.sqrt(2)*np.sqrt(gamma*(-beta + np.sqrt(-4*alpha*gamma + beta**2)))/(2*gamma)
+    Acrit3 = -np.sqrt(2)*np.sqrt(gamma*(-beta + np.sqrt(-4*alpha*gamma + beta**2)))/(2*gamma)
+    Acrit4 = np.sqrt(-2*gamma*(beta + np.sqrt(-4*alpha*gamma + beta**2)))/(2*gamma)
+    Acrit5 = -np.sqrt(-2*gamma*(beta + np.sqrt(-4*alpha*gamma + beta**2)))/(2*gamma)
+    A2.append(Acrit2)
+    A3.append(Acrit3)
+    A4.append(Acrit4)
+    A5.append(Acrit5)
+    
+    """
+    
+     
+    dAdt1 = -S/(2*k) - 1
+    dAdt3= (3*k**2)/4  
+    dAdt5= -(863*k**4)/192 + (11*k**3)/6 - (2*k**2)/3 
+    dAdt = [dAdt1,dAdt3,dAdt5]
+    alpha=dAdt[0]
+    beta=dAdt[1]
+    gamma=dAdt[2]
+    Acrit2 = np.sqrt(2)*np.sqrt(gamma*(-beta + np.sqrt(-4*alpha*gamma + beta**2)))/(2*gamma)
+    Acrit3 = -np.sqrt(2)*np.sqrt(gamma*(-beta + np.sqrt(-4*alpha*gamma + beta**2)))/(2*gamma)
+    Acrit4 = np.sqrt(-2*gamma*(beta + np.sqrt(-4*alpha*gamma + beta**2)))/(2*gamma)
+    Acrit5 = -np.sqrt(-2*gamma*(beta + np.sqrt(-4*alpha*gamma + beta**2)))/(2*gamma)
+    A22.append(Acrit3)
+    #A3.append(Acrit3)
+    A44.append(Acrit5)
+    #A5.append(Acrit5)
+    """
+  
+
+   
+    
+    #print(dAdt)
+    #print("5th order dAdt","amp",amp,(dAdt[0])*amp+dAdt[1]*amp**3+dAdt[2]*amp**5)
+
+   
+
+
+    #print(Acrit2,Acrit4)
+   
+    #dAdt = [-0.9817893073130333*S + 0.7108759965720383,1.270452051589555,89.07896899446640]
+    #alpha=dAdt[0]
+    #beta=dAdt[1]
+    #gamma=dAdt[2]
+    #Acrit2 = np.sqrt(2)*np.sqrt(gamma*(-beta + np.sqrt(-4*alpha*gamma + beta**2)))/(2*gamma)
+    #Acrit4 = np.sqrt(-2*gamma*(beta + np.sqrt(-4*alpha*gamma + beta**2)))/(2*gamma)
+    #A22.append(Acrit2)
+    #A44.append(Acrit4)
+    #print(Acrit2,Acrit4)
+    #print(dAdt)
+    #Acrit4 = np.sqrt(-2*beta*(1 + np.sqrt(-4*alpha*beta - 4*beta + 1)))/(2*beta)
+    #print(Acrit2,Acrit4)
+    """
+    """
+    
+""" 
+A4=np.array(A4)
+A2=np.array(A2)
+#print("S0",S0,"S2",S2,"S",S0+S2)
+
+# Find amplitude equation
+#amp=1.0
+#dAdt=amp_eqn_31(k,S0,h11_hydro,h22_hydro,h20_hydro,S=2,amp=amp)
+#print("dAdt",dAdt[0]*amp+dAdt[1]*amp**3+dAdt[2]*amp**5)
+#print(h33)
+"""
+
+plt.clf();
+#plt.plot(SS,A2,'r',linewidth=2);
+plt.plot(SS,A2,'--k',linewidth=2);
+plt.plot(SS,A2,'k',linewidth=2);
+plt.plot(SS,A3,'--',color='gray',linewidth=2);
+plt.plot(SS,A4,'--',color='firebrick',linewidth=2);
+plt.plot(SS,A5,'-',color='gray',linewidth=2);
+#plt.plot(SS,A22,'-.',color='dodgerblue',linewidth=2);
+#plt.plot(SS,A44,'-',color='dodgerblue',linewidth=2);
+#plt.plot(SS,-np.array(A4),linewidth=2,color='r');
+plt.plot(SS[SS>0],1/abs(SS[SS>0]))
+plt.plot(SS[SS>0],2/abs(SS[SS>0]))
+plt.xlim([-4,4])
+plt.ylim([0,1])
+plt.grid()
+plt.draw()
+plt.show()
+
+        
+
