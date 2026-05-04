@@ -41,13 +41,12 @@ import time
 import os
 
 
-path  = '/Users/jbassis/Documents/workspace/weakly_nonlinear/Code/'
+path  = '../code/'
+path  = '../../Code/'
 #path  = '/Users/jbassis/Documents/workspace/testing/Code'
-print(path)
 sys.path.append(path)
 #sys.path.append('/Users/jbassis/Documents/workspace/weakly_nonlinear/Code/')
 #sys.path.append('/Users/jbassis/Documents/workspace/testing/Code')
-import perturb as perturb 
 import stress_stream
 reload(stress_stream)
 import stress_stream as stream
